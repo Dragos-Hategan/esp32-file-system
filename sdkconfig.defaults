@@ -1,32 +1,53 @@
-CONFIG_COMPILER_OPTIMIZATION_PERF=y
-CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y
-CONFIG_LV_DEF_REFR_PERIOD=20
-CONFIG_BSP_DISPLAY_PIXEL_CLOCK=40
-CONFIG_BSP_LCD_DRAW_BUF_HEIGHT=75
-CONFIG_BSP_LCD_DRAW_BUF_DOUBLE=y
-CONFIG_BSP_DISPLAY_LVGL_AVOID_TEAR=y
-CONFIG_LV_OS_FREERTOS=y
-CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
-CONFIG_BSP_DISPLAY_ROTATION_SWAP_XY=y
-CONFIG_BSP_DISPLAY_DRIVER_ILI9341=y
-CONFIG_BSP_DISPLAY_COLOR_SPACE_BGR=y
-CONFIG_PARTITION_TABLE_CUSTOM=y
+# === Build / Toolchain ===
+CONFIG_COMPILER_OPTIMIZATION_PERF=y              # Optimize for speed  [FPS CRITICAL]
+
+# === Flash & Partitions ===
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y                 # Flash size descriptor (not FPS-related)
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_PARTITION_TABLE_CUSTOM=y                   # Use custom partition table
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_modified.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions_modified.csv"
-CONFIG_LV_USE_FREERTOS_TASK_NOTIFY=y
-CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_BSP_DISPLAY_ENABLED=y
-CONFIG_LV_USE_CLIB_MALLOC=y
+
+# === PSRAM ===
+CONFIG_SPIRAM=y                                   # Enable external PSRAM support
+CONFIG_SPIRAM_MODE_OCT=y                          # Use Octal SPI mode (8 data lines)
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y                # Allow CPU to execute code directly from PSRAM
+CONFIG_SPIRAM_RODATA=y                            # Place read-only data (const) in PSRAM
+CONFIG_SPIRAM_SPEED_80M=y                         # PSRAM clock speed set to 80 MHz
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y                    # Enable heap capabilities API (fine control over PSRAM/internal allocations)
+
+# === LVGL – core / OS / libc ===
+CONFIG_LV_OS_FREERTOS=y                           # LVGL uses FreeRTOS
+CONFIG_LV_USE_FREERTOS_TASK_NOTIFY=y              # Faster wakeups for LVGL task
+CONFIG_LV_USE_CLIB_MALLOC=y                       # Use C library malloc
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_USE_DEMO_WIDGETS=y
-CONFIG_BSP_DISPLAY_INTERFACE_SPI=y
 
-CONFIG_BSP_DISPLAY_SCLK_GPIO=12
+# === LVGL – performance / rendering ===
+CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y           # Hot code in IRAM (faster draw)  [FPS CRITICAL]
+CONFIG_LV_DEF_REFR_PERIOD=20                      # 20 ms tick target (~50 Hz)      [FPS CRITICAL]
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2                 # Two draw units (parallelism)     [FPS CRITICAL]
+
+# === BSP Display – panel & enablement ===
+CONFIG_BSP_DISPLAY_ENABLED=y                      # Enable display
+CONFIG_BSP_DISPLAY_DRIVER_ILI9341=y               # ILI9341 driver
+CONFIG_BSP_DISPLAY_PIXEL_CLOCK=40                 # SPI pixel clock (MHz)            [FPS CRITICAL]
+CONFIG_BSP_LCD_DRAW_BUF_HEIGHT=75                 # Draw buffer height (lines)       [FPS CRITICAL]
+CONFIG_BSP_LCD_DRAW_BUF_DOUBLE=y                  # Double buffering                  [FPS CRITICAL]
+CONFIG_BSP_DISPLAY_LVGL_AVOID_TEAR=y              # Tear reduction (may slightly trade FPS for smoothness)
+
+# === Display – orientation & color ===
+CONFIG_BSP_DISPLAY_ROTATION_SWAP_XY=y             # Rotation/orientation
+CONFIG_BSP_DISPLAY_COLOR_SPACE_BGR=y              # Color order (not FPS)
+
+# === Display Interface (SPI) ===
+CONFIG_BSP_DISPLAY_INTERFACE_SPI=y                # SPI interface
+CONFIG_BSP_DISPLAY_RST_GPIO=14
+CONFIG_BSP_DISPLAY_SCLK_GPIO=12                   # SPI CLK pin (routing can affect stability)
 CONFIG_BSP_DISPLAY_MOSI_GPIO=11
 CONFIG_BSP_DISPLAY_MISO_GPIO=13
 CONFIG_BSP_DISPLAY_CS_GPIO=10
 CONFIG_BSP_DISPLAY_DC_GPIO=15
-CONFIG_BSP_DISPLAY_RST_GPIO=14
 CONFIG_BSP_DISPLAY_BACKLIGHT_GPIO=16

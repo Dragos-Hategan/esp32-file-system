@@ -46,18 +46,88 @@ typedef struct{
     int ry; 
 } cal_point_t;
 
-extern esp_lcd_touch_handle_t s_touch;
-extern touch_cal_t s_cal;
-extern cal_point_t cal_point_arrows[5];
+/**
+ * @brief Get the global touch handle created by the XPT2046 driver.
+ *
+ * @return esp_lcd_touch_handle_t Current touch handle or NULL if not initialized.
+ */
+esp_lcd_touch_handle_t touch_get_handle(void);
 
+/**
+ * @brief Get a pointer to the current touch calibration structure.
+ *
+ * @return const touch_cal_t* Pointer to internal calibration data (read-only).
+ */
+const touch_cal_t *touch_get_cal(void);
+
+/**
+ * @brief Initialize SPI and create the XPT2046 touch driver (esp_lcd_touch).
+ *
+ * Sets up the SPI bus for the touch controller, creates the panel IO handle,
+ * and instantiates the XPT2046 touch driver with orientation flags.
+ *
+ * @note On success, a global handle is stored and can be retrieved with touch_get_handle().
+ */
 void init_touch(void);
+
+/**
+ * @brief Register the touch controller as an LVGL pointer device.
+ *
+ * Creates an LVGL input device, sets it to pointer type, and attaches the
+ * @ref lvgl_touch_read_cb callback.
+ *
+ * @return lv_indev_t* LVGL input device handle.
+ */
 lv_indev_t *register_touch_with_lvgl(void);
+
+/**
+ * @brief Save a valid touch calibration to NVS with CRC protection.
+ *
+ * Writes a blob identified by @c TOUCH_CAL_NVS_NS / @c TOUCH_CAL_NVS_KEY.
+ * A magic and CRC-32 are included for integrity checks.
+ *
+ * @param cal Pointer to a valid calibration structure (cal->valid must be true).
+ * @return esp_err_t ESP_OK on success or an error code from NVS APIs.
+ */
 esp_err_t touch_cal_save_nvs(const touch_cal_t *cal);
-bool touch_cal_load_nvs(touch_cal_t *out);
-/** 
+
+/**
+ * @brief Load touch calibration from NVS into the internal state.
+ *
+ * Reads the calibration blob, validates magic and CRC, and updates @ref s_cal.
+ *
+ * @param existing_cal Non-NULL pointer (unused for output here; required to keep signature uniform).
+ * @return true if a valid calibration was loaded, false otherwise.
+ */
+bool touch_cal_load_nvs(touch_cal_t *existing_cal);
+
+/**
+ * @brief Run a 5-point on-screen calibration flow and persist the result to NVS.
+ *
+ * Shows a temporary calibration screen, renders crosshairs at 5 targets,
+ * samples raw coordinates, then solves for an affine transform that maps
+ * raw (x,y) to screen (x',y'):
+ * @code
+ * x' = xA*x + xB*y + xC
+ * y' = yA*x + yB*y + yC
+ * @endcode
+ *
+ * The coefficients are solved via least squares over the 5 samples (normal equations),
+ * checking for a near-singular system. On success, @ref s_cal is marked valid and saved.
+ * 
  * @warning This function assumes there is no LVGL display lock already acquired.
  */
-void run_touch_calibration_5p(esp_lcd_touch_handle_t s_touch);
-void sample_raw(int *rx, int *ry, esp_lcd_touch_handle_t s_touch);
+void run_5point_touch_calibration(void);
+
+/**
+ * @brief Read raw (x,y) from the touch controller by averaging multiple samples.
+ *
+ * Performs 12 reads spaced by ~15 ms, averages them, and returns integer raw coordinates.
+ *
+ * @param[out] rx Averaged raw X.
+ * @param[out] ry Averaged raw Y.
+ * 
+ */
+void sample_raw(int *rx, int *ry);
 
 #endif // TOUCH_XPT2046_H

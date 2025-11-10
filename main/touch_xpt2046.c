@@ -10,9 +10,8 @@
 
 #include <math.h>
 
-esp_lcd_touch_handle_t s_touch = NULL;
-touch_cal_t s_cal = {0};
-cal_point_t cal_point_arrows[5] = {
+/** @brief 5-point calibration target set (screen-space). */
+static cal_point_t CAL_POINT_ARROWS[5] = {
         {20, 20, 0, 0},                                 // top left
         {TOUCH_X_MAX - 20, 20, 0, 0},                   // top right
         {TOUCH_X_MAX - 20, TOUCH_Y_MAX - 20, 0, 0},     // bottom right
@@ -20,9 +19,23 @@ cal_point_t cal_point_arrows[5] = {
         {TOUCH_X_MAX / 2, TOUCH_Y_MAX / 2, 0, 0}        // center
     };
 
+static esp_lcd_touch_handle_t touch_handle = NULL;
+
+esp_lcd_touch_handle_t touch_get_handle(void)
+{
+    return touch_handle;
+}
+
+static touch_cal_t s_cal = {0};
+
+const touch_cal_t *touch_get_cal(void)
+{
+    return &s_cal;
+}
+
 void init_touch(void)
 {
-    // 1) Initialize the SPI3 bus for touch
+    /* ----- Initialize the SPI bus for touch ----- */
     spi_bus_config_t buscfg = {
         .sclk_io_num = TOUCH_SPI_SCLK_IO,
         .mosi_io_num = TOUCH_SPI_MOSI_IO,
@@ -34,7 +47,7 @@ void init_touch(void)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(TOUCH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
-    // 2) Create "panel io" IO for touch (uses esp_lcd API)
+    /* ----- Create "panel io" IO for touch (uses esp_lcd API) ----- */
     esp_lcd_panel_io_spi_config_t tp_io_cfg = {
         .cs_gpio_num = TOUCH_CS_IO,
         .dc_gpio_num = -1,  // not used with touch
@@ -51,7 +64,7 @@ void init_touch(void)
     esp_lcd_panel_io_handle_t tp_io = NULL;
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)TOUCH_SPI_HOST, &tp_io_cfg, &tp_io));
 
-    // 3) Configure driver XPT2046
+    /* ----- Configure driver XPT2046 ----- */
     esp_lcd_touch_config_t tp_cfg = {
         .x_max = TOUCH_X_MAX,
         .y_max = TOUCH_Y_MAX,
@@ -68,14 +81,38 @@ void init_touch(void)
         },
     };
 
-    ESP_ERROR_CHECK(esp_lcd_touch_new_spi_xpt2046(tp_io, &tp_cfg, &s_touch));
+    ESP_ERROR_CHECK(esp_lcd_touch_new_spi_xpt2046(tp_io, &tp_cfg, &touch_handle));
 }
 
+/**
+ * @brief Clamp an integer to a [lo, hi] range.
+ *
+ * @param v  Value to clamp.
+ * @param lo Lower bound (inclusive).
+ * @param hi Upper bound (inclusive).
+ * @return int Clamped value.
+ */
 static inline int clampi(int v, int lo, int hi)
 {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+/**
+ * @brief Apply current touch calibration to a raw (x,y) reading.
+ *
+ * If no valid calibration is available, the raw coordinates are clamped to the display bounds.
+ * Otherwise, an affine transform is applied:
+ * @code
+ * x' = xA*x + xB*y + xC
+ * y' = yA*x + yB*y + yC
+ * @endcode
+ *
+ * @param raw_x Raw X from controller.
+ * @param raw_y Raw Y from controller.
+ * @param[out] out_point Output LVGL point (screen space).
+ * @param xmax Screen width (max X, exclusive).
+ * @param ymax Screen height (max Y, exclusive).
+ */
 static void apply_touch_calibration(uint16_t raw_x, uint16_t raw_y, lv_point_t *out_point, int xmax, int ymax)
 {
     if (!s_cal.valid) {
@@ -91,16 +128,24 @@ static void apply_touch_calibration(uint16_t raw_x, uint16_t raw_y, lv_point_t *
     out_point->y = clampi((int)(yf + 0.5f), 0, ymax - 1);
 }
 
-// LVGL callback for touch reading
+/**
+ * @brief LVGL input device read callback for the touch controller.
+ *
+ * Reads the latest touch sample from the XPT2046 via esp_lcd_touch, applies calibration,
+ * and fills @p data with pointer position and state.
+ *
+ * @param indev Unused LVGL input device handle.
+ * @param data  LVGL input data to fill.
+ */
 static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     uint16_t x, y;
     uint8_t btn = 0;
     bool pressed = false;
 
-    if (s_touch) {
-        if (esp_lcd_touch_read_data(s_touch) == ESP_OK){
-            if (esp_lcd_touch_get_coordinates(s_touch, &x, &y, NULL, &btn, 1)) {
+    if (touch_handle) {
+        if (esp_lcd_touch_read_data(touch_handle) == ESP_OK){
+            if (esp_lcd_touch_get_coordinates(touch_handle, &x, &y, NULL, &btn, 1)) {
                 pressed = true;
                 apply_touch_calibration(x, y, &data->point, TOUCH_X_MAX, TOUCH_Y_MAX);
             }
@@ -120,6 +165,13 @@ lv_indev_t *register_touch_with_lvgl(void)
     return indev;
 }
 
+/**
+ * @brief Compute CRC-32 (poly 0xEDB88320, reflected) over a byte buffer.
+ *
+ * @param data Pointer to data.
+ * @param len  Data length in bytes.
+ * @return uint32_t CRC-32 of the buffer.
+ */
 static uint32_t crc32_fast(const void *data, size_t len)
 {
     uint32_t crc = 0xFFFFFFFF;
@@ -153,9 +205,9 @@ esp_err_t touch_cal_save_nvs(const touch_cal_t *cal)
     return err;
 }
 
-bool touch_cal_load_nvs(touch_cal_t *out)
+bool touch_cal_load_nvs(touch_cal_t *existing_cal)
 {
-    if (!out) return false;
+    if (!existing_cal) return false;
 
     nvs_handle_t h;
     if (nvs_open(TOUCH_CAL_NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
@@ -178,13 +230,13 @@ bool touch_cal_load_nvs(touch_cal_t *out)
 
 static const int CALIBRATION_MESSAGE_DISPLAY_TIME_MS = 500;
 
-void run_touch_calibration_5p(esp_lcd_touch_handle_t s_touch)
+void run_5point_touch_calibration(void)
 {
     const char * TAG = "Touch Calibration";
 
     bsp_display_lock(0);
 
-    // 1) Create a new screen for calibration
+    /* ----- Create a new screen for calibration ----- */
     lv_obj_t *old_scr = lv_screen_active();
     lv_obj_t *cal_scr = lv_obj_create(NULL);
     lv_screen_load(cal_scr);
@@ -200,29 +252,36 @@ void run_touch_calibration_5p(esp_lcd_touch_handle_t s_touch)
     bsp_display_unlock();
     vTaskDelay(pdMS_TO_TICKS(CALIBRATION_MESSAGE_DISPLAY_TIME_MS));
     
-    // 2) Collect raw data
+    /* ----- Collect raw data ----- */
     for (int i = 0; i < 5; i++) {
         bsp_display_lock(0);
-        draw_cross(cal_point_arrows[i].tx, cal_point_arrows[i].ty);
-
+        draw_cross(CAL_POINT_ARROWS[i].tx, CAL_POINT_ARROWS[i].ty);
         bsp_display_unlock();
-        sample_raw(&cal_point_arrows[i].rx, &cal_point_arrows[i].ry, s_touch);
+
+        sample_raw(&CAL_POINT_ARROWS[i].rx, &CAL_POINT_ARROWS[i].ry);
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 
-    // 3) Calculate the coefficients for the affine transformation:
-    // x' = xA*x + xB*y + xC
-    // y' = yA*x + yB*y + yC
+    /* ----- Calculate the coefficients for the affine transformation ----- */
+    float Sx = 0;
+    float Sy = 0;
+    float Sxx = 0;
+    float Syy = 0;
+    float Sxy = 0;
 
-    float Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0;
-    float Sx_tx = 0, Sy_tx = 0, Sx_ty = 0, Sy_ty = 0, S1 = 0;
-    float Stx = 0, Sty = 0;
+    float Sx_tx = 0;
+    float Sy_tx = 0;
+    float Sx_ty = 0;
+    float Sy_ty = 0;
+    float S1 = 0;
+    float Stx = 0;
+    float Sty = 0;
 
     for (int i = 0; i < 5; i++) {
-        float x = cal_point_arrows[i].rx;
-        float y = cal_point_arrows[i].ry;
-        float tx = cal_point_arrows[i].tx;
-        float ty = cal_point_arrows[i].ty;
+        float x = CAL_POINT_ARROWS[i].rx;
+        float y = CAL_POINT_ARROWS[i].ry;
+        float tx = CAL_POINT_ARROWS[i].tx;
+        float ty = CAL_POINT_ARROWS[i].ty;
 
         Sx += x; Sy += y;
         Sxx += x * x;
@@ -264,7 +323,7 @@ void run_touch_calibration_5p(esp_lcd_touch_handle_t s_touch)
 
     s_cal.valid = true;
 
-    // 4) Get back to the initial screen
+    /* ----- Get back to the initial screen ----- */
     bsp_display_lock(0);
     lv_screen_load(old_scr);
     lv_obj_del(cal_scr);
@@ -274,19 +333,23 @@ void run_touch_calibration_5p(esp_lcd_touch_handle_t s_touch)
     ESP_LOGI(TAG, "Touch cal saved to NVS: %s", esp_err_to_name(err));    
 }
 
-// Read raw coordinates (average of 12 samples)
-void sample_raw(int *rx, int *ry, esp_lcd_touch_handle_t s_touch)
+void sample_raw(int *rx, int *ry)
 {
-    uint32_t sx = 0, sy = 0, n = 0;
+    uint32_t sx = 0;
+    uint32_t sy = 0;
+    uint32_t n = 0;
+
     while (n < 12) {
         uint16_t x, y;
         uint8_t btn;
-        esp_lcd_touch_read_data(s_touch);
-        if (esp_lcd_touch_get_coordinates(s_touch, &x, &y, NULL, &btn, 1)) {
+        esp_lcd_touch_read_data(touch_handle);
+
+        if (esp_lcd_touch_get_coordinates(touch_handle, &x, &y, NULL, &btn, 1)) {
             sx += x;
             sy += y;
             n++;
         }
+
         vTaskDelay(pdMS_TO_TICKS(15));
     }
     *rx = sx / n;
