@@ -8,12 +8,24 @@
 
 #include "nvs_flash.h"
 
-#include "ui.h"
+#include "calibration_ui.h"
 #include "touch_xpt2046.h"
 
 static char *TAG = "app_main";
 
 #define LOG_MEM_INFO    (0)
+
+static void init_nvs(bool *calibration_found)
+{
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    }
+    const touch_cal_t *existing_cal = touch_get_cal();
+    *calibration_found = touch_cal_load_nvs(existing_cal);
+    printf("%s\n", *calibration_found == 1 ? "Calibrated" : "Needs Calibration");
+}
 
 static void my_task_function(void *arg)
 {
@@ -23,24 +35,17 @@ static void my_task_function(void *arg)
     ESP_LOGI(TAG, "Display LVGL demo");
 
     /* ----- Init NVS ----- */
-    esp_err_t nvs_err = nvs_flash_init();
-    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
-    }
-    const touch_cal_t *existing_cal = touch_get_cal();
-    bool have_cal = touch_cal_load_nvs(existing_cal);
-    printf("%s\n", have_cal == 1 ? "Calibrated" : "Needs Calibration");
+    bool calibration_found;
+    init_nvs(&calibration_found);
     freeStack[1] = uxTaskGetStackHighWaterMark(NULL);
 
-    /* ----- Initialize display and LVGL ----- */
+    /* ----- Init display and LVGL ----- */
     bsp_display_start(); 
     bsp_display_backlight_on(); 
     freeStack[2] = uxTaskGetStackHighWaterMark(NULL);
 
-    /* ----- Initialize touch ----- */
+    /* ----- Init touch driver ----- */
     init_touch(); 
-
     freeStack[3] = uxTaskGetStackHighWaterMark(NULL);
 
     /* ----- Register Touch to LVGL ----- */
@@ -53,7 +58,7 @@ static void my_task_function(void *arg)
     freeStack[4] = uxTaskGetStackHighWaterMark(NULL);
     
     /* ----- Calibration Test ----- */
-    if (!have_cal) {
+    if (!calibration_found) {
         // No calibration saved: runs calibration directly
         run_5point_touch_calibration();
         freeStack[5] = uxTaskGetStackHighWaterMark(NULL);
@@ -76,7 +81,6 @@ static void my_task_function(void *arg)
             bsp_display_unlock(); 
         }
     }
-    
     freeStack[8] = uxTaskGetStackHighWaterMark(NULL);
 
 

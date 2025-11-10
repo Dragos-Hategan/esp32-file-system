@@ -99,7 +99,7 @@ esp_err_t touch_cal_save_nvs(const touch_cal_t *cal);
  * @param existing_cal Non-NULL pointer (unused for output here; required to keep signature uniform).
  * @return true if a valid calibration was loaded, false otherwise.
  */
-bool touch_cal_load_nvs(touch_cal_t *existing_cal);
+bool touch_cal_load_nvs(const touch_cal_t *existing_cal);
 
 /**
  * @brief Run a 5-point on-screen calibration flow and persist the result to NVS.

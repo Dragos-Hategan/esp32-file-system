@@ -6,17 +6,16 @@
 #define UI_H
 
 /**
- * @brief Display a full-white screen with a centered text message.
+ * @brief Display a full screen with a centered text message.
  *
- * Clears the active screen, sets a white background, places a centered label,
- * updates layout, and forces an immediate refresh.
+ * Places a centered label, updates layout, and forces an immediate refresh.
  *
  * @param txt Null-terminated string to show in the center.
  *
  * @note Runs on the LVGL thread/context; make sure your platform’s display
  *       locking rules are respected before calling if required.
  */
-void ui_show_message(const char *txt);
+void ui_show_calibration_message(void);
 
 /**
  * @brief Show a modal Yes/No dialog with a 5-second auto-Yes countdown.

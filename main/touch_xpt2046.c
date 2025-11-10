@@ -3,7 +3,7 @@
 
 #include "bsp/esp-bsp.h"
 #include "touch_xpt2046.h"
-#include "ui.h"
+#include "calibration_ui.h"
 #include "esp_lcd_touch_xpt2046.h"
 #include "nvs.h"
 #include "esp_log.h"
@@ -205,7 +205,7 @@ esp_err_t touch_cal_save_nvs(const touch_cal_t *cal)
     return err;
 }
 
-bool touch_cal_load_nvs(touch_cal_t *existing_cal)
+bool touch_cal_load_nvs(const touch_cal_t *existing_cal)
 {
     if (!existing_cal) return false;
 
@@ -247,7 +247,7 @@ void run_5point_touch_calibration(void)
     lv_obj_set_style_bg_color(cal_scr, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(cal_scr, LV_OPA_COVER, 0);
 
-    ui_show_message("Get Ready For Touch Screen Calibration");
+    ui_show_calibration_message();
 
     bsp_display_unlock();
     vTaskDelay(pdMS_TO_TICKS(CALIBRATION_MESSAGE_DISPLAY_TIME_MS));

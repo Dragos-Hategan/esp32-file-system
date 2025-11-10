@@ -4,12 +4,12 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-#include "ui.h"
+#include "calibration_ui.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
 
-void ui_show_message(const char *txt)
+void ui_show_calibration_message(void)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
@@ -19,7 +19,7 @@ void ui_show_message(const char *txt)
 
     lv_obj_t *lbl = lv_label_create(scr);
     lv_obj_set_style_text_color(lbl, lv_color_black(), 0);
-    lv_label_set_text(lbl, txt);
+    lv_label_set_text(lbl, "Get Ready For Touch Screen Calibration");
     lv_obj_center(lbl);
 
     lv_obj_update_layout(scr);
