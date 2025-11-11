@@ -5,17 +5,17 @@
 #include "lvgl.h"
 #include "esp_lcd_touch.h"
 #include "driver/spi_master.h"
+#include "file_browser.h"
 
 /* ---------------------- XPT2046 TOUCH CONFIG ---------------------- */
 // SPI Config
-#define TOUCH_SPI_HOST      SPI3_HOST
-#define TOUCH_SPI_SCLK_IO   GPIO_NUM_2
-#define TOUCH_SPI_MISO_IO   GPIO_NUM_39
-#define TOUCH_SPI_MOSI_IO   GPIO_NUM_40
-#define TOUCH_CS_IO         GPIO_NUM_41
+#define TOUCH_SPI_HOST      BSP_LCD_SPI_NUM
+#define TOUCH_SPI_MISO_IO   CONFIG_BSP_DISPLAY_MISO_GPIO
+#define TOUCH_SPI_MOSI_IO   CONFIG_BSP_DISPLAY_MOSI_GPIO
+#define TOUCH_SPI_SCLK_IO   CONFIG_BSP_DISPLAY_SCLK_GPIO
+#define TOUCH_CS_IO         GPIO_NUM_8
+#define TOUCH_IRQ_IO        GPIO_NUM_11      // active LOW on XPT2046
 
-// IRQ + RST:
-#define TOUCH_IRQ_IO        GPIO_NUM_1      // active LOW on XPT2046
 #define TOUCH_RST_IO        -1     
 
 // Panel dimensions and orientation
@@ -31,20 +31,12 @@
 #define TOUCH_CAL_NVS_KEY    "affine_v1"
 /* ---------------------- XPT2046 TOUCH CONFIG ---------------------- */
 
-typedef struct {
-    float xA, xB, xC;   // for x' = xA*x + xB*y + xC
-    float yA, yB, yC;   // for y' = yA*x + yB*y + yC
-    bool valid;
-    uint32_t magic;     // 0xC411B007
-    uint32_t crc32;     // simple, for integrity
-} touch_cal_t;
-
-typedef struct{ 
-    int tx;
-    int ty; 
-    int rx;
-    int ry; 
-} cal_point_t;
+/**
+ * @brief Get a pointer to the global touch input device created by lv_indev_create().
+ *
+ * @return lv_indev_t Current touch input device pointer or NULL if not initialized.
+ */
+lv_indev_t *touch_get_indev(void);
 
 /**
  * @brief Get the global touch handle created by the XPT2046 driver.
@@ -54,87 +46,46 @@ typedef struct{
 esp_lcd_touch_handle_t touch_get_handle(void);
 
 /**
- * @brief Get a pointer to the current touch calibration structure.
+ * @brief Initialize the SPI bus and create the XPT2046 touch driver.
  *
- * @return const touch_cal_t* Pointer to internal calibration data (read-only).
+ * This function sets up the SPI bus used by the XPT2046 touch controller,
+ * creates the `esp_lcd_panel_io` handle, and initializes the XPT2046 touch driver
+ * through the `esp_lcd_touch` API.  
+ * It also applies orientation flags such as axis swap and mirroring according
+ * to the configuration macros (`TOUCH_SWAP_XY`, `TOUCH_MIRROR_X`, `TOUCH_MIRROR_Y`).
+ *
+ * If the function is called multiple times, initialization will only be performed once.
+ * On success, a global handle to the touch driver is stored internally and can be
+ * retrieved later using `touch_get_handle()`.
+ *
+ * @return
+ * - ESP_OK on successful initialization  
+ * - Error code from underlying ESP-IDF driver functions if initialization fails  
+ *   (for example: @c ESP_ERR_NO_MEM, @c ESP_ERR_INVALID_ARG, etc.)
+ *
+ * @note The SPI bus is initialized with automatic DMA channel selection.
+ * @note The XPT2046 interrupt pin is expected to be active-low.
+ * @note The recommended SPI clock for XPT2046 is typically ≤ 2.5 MHz.
+ *
  */
-const touch_cal_t *touch_get_cal(void);
-
-/**
- * @brief Initialize SPI and create the XPT2046 touch driver (esp_lcd_touch).
- *
- * Sets up the SPI bus for the touch controller, creates the panel IO handle,
- * and instantiates the XPT2046 touch driver with orientation flags.
- *
- * @note On success, a global handle is stored and can be retrieved with touch_get_handle().
- */
-void init_touch(void);
+esp_err_t init_touch(void);
 
 /**
  * @brief Register the XPT2046 touch controller with LVGL.
  *
- * Initializes and registers the touch controller as an LVGL input device.
- * The function locks the display driver during registration to ensure thread safety,
- * creates the LVGL input device through @ref register_touch_with_lvgl,
- * and attaches the touch read callback used by LVGL for touch events.
+ * Locks the BSP display (LVGL draw context), creates and registers the touch
+ * input device via @ref register_touch_with_lvgl, and then attaches the read
+ * callback so LVGL can fetch touch events.
  *
- * If device registration fails, the function releases the display lock and exits safely.
+ * The display lock is released on all code paths.
  *
- * @note This function must be called after LVGL and the display driver
- *       have been initialized.
+ * @return
+ * - true  : touch input device was created/registered successfully
+ * - false : registration failed (e.g., driver not initialized or allocation error)
  *
- * @see register_touch_with_lvgl
+ * @note Must be called after LVGL and the display/panel drivers are initialized.
+ * @note `bsp_display_lock(0)` waits indefinitely for the lock (thread-safe).
  */
-void register_touch_to_lvgl(void);
-
-/**
- * @brief Save a valid touch calibration to NVS with CRC protection.
- *
- * Writes a blob identified by @c TOUCH_CAL_NVS_NS / @c TOUCH_CAL_NVS_KEY.
- * A magic and CRC-32 are included for integrity checks.
- *
- * @param cal Pointer to a valid calibration structure (cal->valid must be true).
- * @return esp_err_t ESP_OK on success or an error code from NVS APIs.
- */
-esp_err_t touch_cal_save_nvs(const touch_cal_t *cal);
-
-/**
- * @brief Load touch calibration from NVS into the internal state.
- *
- * Reads the calibration blob, validates magic and CRC, and updates @ref s_cal.
- *
- * @param existing_cal Non-NULL pointer (unused for output here; required to keep signature uniform).
- * @return true if a valid calibration was loaded, false otherwise.
- */
-bool touch_cal_load_nvs(const touch_cal_t *existing_cal);
-
-/**
- * @brief Run a 5-point on-screen calibration flow and persist the result to NVS.
- *
- * Shows a temporary calibration screen, renders crosshairs at 5 targets,
- * samples raw coordinates, then solves for an affine transform that maps
- * raw (x,y) to screen (x',y'):
- * @code
- * x' = xA*x + xB*y + xC
- * y' = yA*x + yB*y + yC
- * @endcode
- *
- * The coefficients are solved via least squares over the 5 samples (normal equations),
- * checking for a near-singular system. On success, @ref s_cal is marked valid and saved.
- * 
- * @warning This function assumes there is no LVGL display lock already acquired.
- */
-void run_5point_touch_calibration(void);
-
-/**
- * @brief Read raw (x,y) from the touch controller by averaging multiple samples.
- *
- * Performs 12 reads spaced by ~15 ms, averages them, and returns integer raw coordinates.
- *
- * @param[out] rx Averaged raw X.
- * @param[out] ry Averaged raw Y.
- * 
- */
-void sample_raw(int *rx, int *ry);
+bool register_touch_to_lvgl(void);
 
 #endif // TOUCH_XPT2046_H

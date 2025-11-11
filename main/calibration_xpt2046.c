@@ -1,0 +1,583 @@
+#include <string.h>
+#include <math.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
+#include "nvs.h"
+
+#include "calibration_xpt2046.h"
+#include "touch_xpt2046.h"
+#include "esp_log.h"
+
+static touch_cal_t s_cal = {0};
+
+const touch_cal_t *touch_get_cal(void)
+{
+    return &s_cal;
+}
+
+void load_nvs_calibration(bool *calibration_found)
+{
+    const touch_cal_t *existing_cal = touch_get_cal();
+    *calibration_found = touch_cal_load_nvs(existing_cal);
+    printf("%s\n", *calibration_found == 1 ? "Calibrated" : "Needs Calibration");
+}
+
+/**
+ * @brief Read raw (x,y) from the touch controller by averaging multiple samples.
+ *
+ * Performs 12 reads spaced by ~15 ms, averages them, and returns integer raw coordinates.
+ *
+ * @param[out] rx Averaged raw X.
+ * @param[out] ry Averaged raw Y.
+ * 
+ */
+static void sample_raw(int *rx, int *ry)
+{
+    esp_lcd_touch_handle_t touch_handle = touch_get_handle();
+
+    uint32_t sx = 0;
+    uint32_t sy = 0;
+    uint32_t n = 0;
+    
+    while (n < 12)
+    {
+        uint16_t x, y;
+        uint8_t btn;
+        esp_lcd_touch_read_data(touch_handle);
+
+        if (esp_lcd_touch_get_coordinates(touch_handle, &x, &y, NULL, &btn, 1))
+        {
+            sx += x;
+            sy += y;
+            n++;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(15));
+    }
+    *rx = sx / n;
+    *ry = sy / n;
+}
+
+/**
+ * @brief Create an LVGL line object with a given point array and optional style.
+ *
+ * Convenience wrapper around @c lv_line_create and @c lv_line_set_points.
+ *
+ * @param parent Parent LVGL object.
+ * @param pts    Pointer to an array of points (in screen coordinates).
+ * @param cnt    Number of points in @p pts.
+ * @param style  Optional style to apply to the line (can be NULL).
+ *
+ * @note Static helper; not intended to be used outside this module.
+ */
+static void make_line(lv_obj_t *parent, const lv_point_precise_t *pts, uint16_t cnt, const lv_style_t *style)
+{
+    lv_obj_t *l = lv_line_create(parent);
+    if (style)
+        lv_obj_add_style(l, style, 0);
+    lv_line_set_points(l, pts, cnt);
+}
+
+/**
+ * @brief Draw a four-arrow crosshair pointing to a target coordinate.
+ *
+ * Clears the active screen and draws four black arrows (up/down/left/right)
+ * converging toward (@p x, @p y). A shared line style is lazily initialized
+ * on first call. Forces an immediate display refresh when done.
+ *
+ * @param x Target X coordinate in screen space.
+ * @param y Target Y coordinate in screen space.
+ *
+ * @note Designed for LVGL v9. Adjust types/APIs if using a different LVGL major version.
+ */
+static void draw_cross(int x, int y)
+{
+    lv_obj_t *scr = lv_screen_active();
+    lv_obj_clean(scr); // remove old children
+
+    /* ---- Shared line style (black, width 3) ----- */
+    static lv_style_t st;
+    static bool inited = false;
+    if (!inited)
+    {
+        lv_style_init(&st);
+        lv_style_set_line_width(&st, 3);
+        lv_style_set_line_color(&st, lv_color_black());
+        lv_style_set_line_rounded(&st, false);
+        inited = true;
+    }
+
+    const int gap = 5;  // tip distance from center
+    const int len = 24; // shaft length
+    const int head = 7; // arrow head size
+
+    /* ---- Up arrow (points down toward center) ----- */
+    lv_point_precise_t up_shaft[] = {{x, y - gap - len}, {x, y - gap}};
+    lv_point_precise_t up_head_l[] = {{x, y - gap}, {x - head, y - gap - head}};
+    lv_point_precise_t up_head_r[] = {{x, y - gap}, {x + head, y - gap - head}};
+    make_line(scr, up_shaft, 2, &st);
+    make_line(scr, up_head_l, 2, &st);
+    make_line(scr, up_head_r, 2, &st);
+
+    /* ---- Down arrow (points up toward center) ----- */
+    lv_point_precise_t down_shaft[] = {{x, y + gap + len}, {x, y + gap}};
+    lv_point_precise_t down_head_l[] = {{x, y + gap}, {x - head, y + gap + head}};
+    lv_point_precise_t down_head_r[] = {{x, y + gap}, {x + head, y + gap + head}};
+    make_line(scr, down_shaft, 2, &st);
+    make_line(scr, down_head_l, 2, &st);
+    make_line(scr, down_head_r, 2, &st);
+
+    /* ---- Left arrow (points right toward center) ----- */
+    lv_point_precise_t left_shaft[] = {{x - gap - len, y}, {x - gap, y}};
+    lv_point_precise_t left_head_u[] = {{x - gap, y}, {x - gap - head, y - head}};
+    lv_point_precise_t left_head_d[] = {{x - gap, y}, {x - gap - head, y + head}};
+    make_line(scr, left_shaft, 2, &st);
+    make_line(scr, left_head_u, 2, &st);
+    make_line(scr, left_head_d, 2, &st);
+
+    /* ---- Right arrow (points left toward center) ----- */
+    lv_point_precise_t right_shaft[] = {{x + gap + len, y}, {x + gap, y}};
+    lv_point_precise_t right_head_u[] = {{x + gap, y}, {x + gap + head, y - head}};
+    lv_point_precise_t right_head_d[] = {{x + gap, y}, {x + gap + head, y + head}};
+    make_line(scr, right_shaft, 2, &st);
+    make_line(scr, right_head_u, 2, &st);
+    make_line(scr, right_head_d, 2, &st);
+
+    lv_refr_now(NULL);
+}
+
+static const int CALIBRATION_MESSAGE_DISPLAY_TIME_MS = 3000;
+
+/** @brief 5-point calibration target set (screen-space). */
+static cal_point_t CAL_POINT_ARROWS[5] = {
+    {20, 20, 0, 0},                             // top left
+    {TOUCH_X_MAX - 20, 20, 0, 0},               // top right
+    {TOUCH_X_MAX - 20, TOUCH_Y_MAX - 20, 0, 0}, // bottom right
+    {20, TOUCH_Y_MAX - 20, 0, 0},               // bottom left
+    {TOUCH_X_MAX / 2, TOUCH_Y_MAX / 2, 0, 0}    // center
+};
+
+void run_5point_touch_calibration(void)
+{
+    const char *TAG = "Touch Calibration";
+
+    bsp_display_lock(0);
+
+    /* ----- Create a new screen for calibration ----- */
+    lv_obj_t *old_scr = lv_screen_active();
+    lv_obj_t *cal_scr = lv_obj_create(NULL);
+    lv_screen_load(cal_scr);
+
+    lv_obj_clear_flag(cal_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(cal_scr, LV_DIR_NONE);
+    lv_obj_set_scrollbar_mode(cal_scr, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(cal_scr, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(cal_scr, LV_OPA_COVER, 0);
+
+    ui_show_calibration_message();
+
+    bsp_display_unlock();
+    vTaskDelay(pdMS_TO_TICKS(CALIBRATION_MESSAGE_DISPLAY_TIME_MS));
+
+    lv_indev_t *indev = touch_get_indev();
+    if (indev)
+    {
+        bsp_display_lock(0);
+        lv_indev_enable(indev, false);
+        bsp_display_unlock();
+    }
+
+    /* ----- Collect raw data ----- */
+    for (int i = 0; i < 5; i++)
+    {
+        bsp_display_lock(0);
+        draw_cross(CAL_POINT_ARROWS[i].tx, CAL_POINT_ARROWS[i].ty);
+        bsp_display_unlock();
+
+        sample_raw(&CAL_POINT_ARROWS[i].rx, &CAL_POINT_ARROWS[i].ry);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
+    if (indev)
+    {
+        bsp_display_lock(0);
+        lv_indev_enable(indev, true);
+        bsp_display_unlock();
+    }
+
+    /* ----- Calculate the coefficients for the affine transformation ----- */
+    float Sx = 0;
+    float Sy = 0;
+    float Sxx = 0;
+    float Syy = 0;
+    float Sxy = 0;
+
+    float Sx_tx = 0;
+    float Sy_tx = 0;
+    float Sx_ty = 0;
+    float Sy_ty = 0;
+    float S1 = 0;
+    float Stx = 0;
+    float Sty = 0;
+
+    for (int i = 0; i < 5; i++)
+    {
+        float x = CAL_POINT_ARROWS[i].rx;
+        float y = CAL_POINT_ARROWS[i].ry;
+        float tx = CAL_POINT_ARROWS[i].tx;
+        float ty = CAL_POINT_ARROWS[i].ty;
+
+        Sx += x;
+        Sy += y;
+        Sxx += x * x;
+        Syy += y * y;
+        Sxy += x * y;
+        S1 += 1.0f;
+
+        Sx_tx += x * tx;
+        Sy_tx += y * tx;
+        Stx += tx;
+
+        Sx_ty += x * ty;
+        Sy_ty += y * ty;
+        Sty += ty;
+    }
+
+    float denom = (Sxx * Syy - Sxy * Sxy);
+    if (fabsf(denom) < 1e-6f)
+    {
+        s_cal.valid = false;
+
+        bsp_display_lock(0);
+        lv_screen_load(old_scr);
+        lv_obj_del(cal_scr);
+        bsp_display_unlock();
+
+        ESP_LOGW(TAG, "Calibration failed: singular matrix");
+        return;
+    }
+
+    // Coefficients for X
+    s_cal.xA = (Sx_tx * Syy - Sy_tx * Sxy) / denom;
+    s_cal.xB = (Sy_tx * Sxx - Sx_tx * Sxy) / denom;
+    s_cal.xC = (Stx - s_cal.xA * Sx - s_cal.xB * Sy) / S1;
+
+    // Coefficients for Y
+    s_cal.yA = (Sx_ty * Syy - Sy_ty * Sxy) / denom;
+    s_cal.yB = (Sy_ty * Sxx - Sx_ty * Sxy) / denom;
+    s_cal.yC = (Sty - s_cal.yA * Sx - s_cal.yB * Sy) / S1;
+
+    s_cal.valid = true;
+
+    /* ----- Get back to the initial screen ----- */
+    bsp_display_lock(0);
+    lv_screen_load(old_scr);
+    lv_obj_del(cal_scr);
+    bsp_display_unlock();
+
+    esp_err_t err = touch_cal_save_nvs(&s_cal);
+    ESP_ERROR_CHECK(err);
+    ESP_LOGI(TAG, "Touch cal saved to NVS: %s", esp_err_to_name(err));
+}
+
+/**
+ * @brief Clamp an integer to a [lo, hi] range.
+ *
+ * @param v  Value to clamp.
+ * @param lo Lower bound (inclusive).
+ * @param hi Upper bound (inclusive).
+ * @return int Clamped value.
+ */
+static inline int clampi(int v, int lo, int hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+void apply_touch_calibration(uint16_t raw_x, uint16_t raw_y, lv_point_t *out_point, int xmax, int ymax)
+{
+    if (!s_cal.valid)
+    {
+        out_point->x = clampi(raw_x, 0, xmax - 1);
+        out_point->y = clampi(raw_y, 0, ymax - 1);
+        return;
+    }
+
+    float xf = s_cal.xA * raw_x + s_cal.xB * raw_y + s_cal.xC;
+    float yf = s_cal.yA * raw_x + s_cal.yB * raw_y + s_cal.yC;
+
+    out_point->x = clampi((int)(xf + 0.5f), 0, xmax - 1);
+    out_point->y = clampi((int)(yf + 0.5f), 0, ymax - 1);
+}
+
+void ui_show_calibration_message(void)
+{
+    lv_obj_t *scr = lv_screen_active();
+    lv_obj_clean(scr);
+
+    lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+    lv_obj_t *lbl = lv_label_create(scr);
+    lv_obj_set_style_text_color(lbl, lv_color_black(), 0);
+    lv_label_set_text(lbl, "Get Ready For Touch Screen Calibration");
+    lv_obj_center(lbl);
+
+    lv_obj_update_layout(scr);
+    lv_refr_now(NULL);
+}
+
+/**
+ * @brief Response container passed to button event callbacks of the Yes/No dialog.
+ */
+typedef struct
+{
+    SemaphoreHandle_t xSemaphore;
+    bool resonse;
+} msg_box_response_t;
+
+/**
+ * @brief LVGL button click event handler for the Yes/No dialog.
+ *
+ * Interprets the clicked button by reading its first child label’s text.
+ * Sets the @ref msg_box_response_t::resonse flag accordingly and gives
+ * the semaphore to wake the waiting task.
+ *
+ * @param e LVGL event descriptor (expects LV_EVENT_CLICKED).
+ *
+ * @pre The event’s user data must be a valid pointer to @ref msg_box_response_t.
+ * @pre The target object must be a button whose first child is a label with text "Yes" or "No".
+ *
+ * @note Static helper; not intended to be called directly outside this module.
+ */
+static void event_cb(lv_event_t *e)
+{
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    msg_box_response_t *msg_respone = (msg_box_response_t *)lv_event_get_user_data(e);
+
+    if (strcmp(lv_label_get_text(label), "Yes") == 0)
+    {
+        msg_respone->resonse = true;
+    }
+    else if (strcmp(lv_label_get_text(label), "No") == 0)
+    {
+        msg_respone->resonse = false;
+    }
+
+    xSemaphoreGive(msg_respone->xSemaphore);
+}
+
+bool ui_yes_no_dialog(const char *question)
+{
+    bsp_display_lock(0); 
+
+    lv_obj_t *scr = lv_screen_active();
+    lv_obj_t *mbox1 = lv_msgbox_create(scr);
+
+    lv_obj_set_style_max_width(mbox1, lv_pct(90), 0);
+    lv_obj_align(mbox1, LV_ALIGN_CENTER, 0, -50);    
+
+    lv_obj_t *label = lv_label_create(mbox1);
+    lv_label_set_text(label, question);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label, lv_pct(100));
+
+    msg_box_response_t msg_box_response = {
+        .xSemaphore = xSemaphoreCreateBinary(),
+        .resonse = false};
+
+    lv_obj_t *btn;
+    btn = lv_msgbox_add_footer_button(mbox1, "Yes");
+    lv_obj_add_event_cb(btn, event_cb, LV_EVENT_CLICKED, &msg_box_response);
+    btn = lv_msgbox_add_footer_button(mbox1, "No");
+    lv_obj_add_event_cb(btn, event_cb, LV_EVENT_CLICKED, &msg_box_response);
+
+    /* Compact container aligned exactly under the dialog */
+    lv_obj_t *loader_wrap = lv_obj_create(scr);
+    lv_obj_remove_style_all(loader_wrap);
+    lv_obj_set_style_pad_all(loader_wrap, 0, 0);
+    lv_obj_set_style_border_width(loader_wrap, 0, 0);
+    lv_obj_set_width(loader_wrap, 120);
+    lv_obj_set_height(loader_wrap, LV_SIZE_CONTENT);
+    lv_obj_align_to(loader_wrap, mbox1, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
+
+    lv_obj_t *performing_label = lv_label_create(loader_wrap);
+    lv_label_set_text(performing_label, "Performing Calibration");
+    lv_obj_set_style_text_align(performing_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(performing_label, lv_pct(100));
+    lv_obj_align(performing_label, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t *loading_arc = lv_arc_create(loader_wrap);
+    lv_obj_set_size(loading_arc, 60, 60);                 // slightly smaller for better proportions
+    lv_arc_set_range(loading_arc, 0, 100);
+    lv_arc_set_bg_angles(loading_arc, 0, 360);
+    lv_arc_set_rotation(loading_arc, 270);
+    lv_arc_set_value(loading_arc, 100);
+    lv_obj_remove_style(loading_arc, NULL, LV_PART_KNOB);
+    lv_obj_align_to(loading_arc, performing_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);    
+
+    lv_obj_t *countdown_label = lv_label_create(loading_arc);
+    lv_obj_set_style_text_font(countdown_label, LV_FONT_DEFAULT, 0);
+    lv_label_set_text(countdown_label, "5");
+    lv_obj_center(countdown_label);
+
+    lv_obj_invalidate(scr);
+    lv_refr_now(lv_disp_get_default());
+
+    bsp_display_unlock();
+
+    const uint32_t countdown_ms = 5000;
+    TickType_t start_ticks = xTaskGetTickCount();
+    TickType_t timeout_ticks = pdMS_TO_TICKS(countdown_ms);
+    int last_second_displayed = 5;
+    int last_arc_value = 100;
+
+    while (true) {
+        if (xSemaphoreTake(msg_box_response.xSemaphore, pdMS_TO_TICKS(50)) == pdTRUE) {
+            break;
+        }
+
+        TickType_t now_ticks = xTaskGetTickCount();
+        TickType_t elapsed_ticks = now_ticks - start_ticks;
+        uint32_t elapsed_ms = elapsed_ticks * portTICK_PERIOD_MS;
+
+        if (elapsed_ticks >= timeout_ticks) {
+            msg_box_response.resonse = true;
+            break;
+        }
+
+        int seconds_left = 5 - (elapsed_ms / 1000);
+        if (seconds_left < 1) {
+            seconds_left = 1;
+        }
+
+        int arc_value = 100 - (int)((elapsed_ms * 100) / countdown_ms);
+        if (arc_value < 0) arc_value = 0;
+
+        if (seconds_left != last_second_displayed || arc_value != last_arc_value) {
+            bsp_display_lock(0);
+            if (seconds_left != last_second_displayed) {
+                lv_label_set_text_fmt(countdown_label, "%d", seconds_left);
+                last_second_displayed = seconds_left;
+            }
+            if (arc_value != last_arc_value) {
+                lv_arc_set_value(loading_arc, arc_value);
+                last_arc_value = arc_value;
+            }
+            bsp_display_unlock();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    bsp_display_lock(0); 
+    lv_msgbox_close(mbox1);
+    lv_obj_del(performing_label);
+    lv_obj_del(loading_arc);
+    bsp_display_unlock(); 
+
+    vSemaphoreDelete(msg_box_response.xSemaphore);
+
+    return msg_box_response.resonse;
+}
+
+void calibration_test(bool calibration_found)
+{
+    if (!calibration_found) {
+        // No calibration saved: runs calibration directly
+        run_5point_touch_calibration();
+
+    } else {
+        // Run calibration?
+        bool run;
+        run = ui_yes_no_dialog("Run Touch Screen Calibration?");
+
+        if (run) {
+            run_5point_touch_calibration();
+
+        } else {
+            // We keep s_cal from NVS; we just clear the screen
+            bsp_display_lock(0); 
+            lv_obj_clean(lv_screen_active());
+            bsp_display_unlock(); 
+        }
+    }
+}
+
+/**
+ * @brief Compute CRC-32 (poly 0xEDB88320, reflected) over a byte buffer.
+ *
+ * @param data Pointer to data.
+ * @param len  Data length in bytes.
+ * @return uint32_t CRC-32 of the buffer.
+ */
+static uint32_t crc32_fast(const void *data, size_t len)
+{
+    uint32_t crc = 0xFFFFFFFF;
+    const uint8_t *p = (const uint8_t *)data;
+    while (len--)
+    {
+        crc ^= *p++;
+        for (int i = 0; i < 8; i++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (-(int)(crc & 1)));
+    }
+    return ~crc;
+}
+
+esp_err_t touch_cal_save_nvs(const touch_cal_t *cal)
+{
+    if (!cal || !cal->valid)
+        return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(TOUCH_CAL_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK)
+        return err;
+
+    touch_cal_t blob = {
+        .xA = cal->xA, .xB = cal->xB, .xC = cal->xC, .yA = cal->yA, .yB = cal->yB, .yC = cal->yC, .magic = 0xC411B007};
+    blob.crc32 = crc32_fast(&blob, sizeof(blob) - sizeof(blob.crc32));
+
+    err = nvs_set_blob(h, TOUCH_CAL_NVS_KEY, &blob, sizeof(blob));
+    if (err == ESP_OK)
+        err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+bool touch_cal_load_nvs(const touch_cal_t *existing_cal)
+{
+    if (!existing_cal)
+        return false;
+
+    nvs_handle_t h;
+    if (nvs_open(TOUCH_CAL_NVS_NS, NVS_READONLY, &h) != ESP_OK)
+        return false;
+
+    touch_cal_t blob;
+    size_t sz = sizeof(blob);
+    esp_err_t err = nvs_get_blob(h, TOUCH_CAL_NVS_KEY, &blob, &sz);
+    nvs_close(h);
+    if (err != ESP_OK || sz != sizeof(blob))
+        return false;
+
+    if (blob.magic != 0xC411B007)
+        return false;
+    uint32_t crc = crc32_fast(&blob, sizeof(blob) - sizeof(blob.crc32));
+    if (crc != blob.crc32)
+        return false;
+
+    s_cal.xA = blob.xA;
+    s_cal.xB = blob.xB;
+    s_cal.xC = blob.xC;
+    s_cal.yA = blob.yA;
+    s_cal.yB = blob.yB;
+    s_cal.yC = blob.yC;
+    s_cal.valid = true;
+
+    return true;
+}
