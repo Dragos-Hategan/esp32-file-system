@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
@@ -274,6 +275,18 @@ fs_nav_sort_mode_t fs_nav_get_sort(const fs_nav_t *nav)
 bool fs_nav_is_sort_ascending(const fs_nav_t *nav)
 {
     return nav ? nav->ascending : true;
+}
+
+esp_err_t fs_nav_compose_path(const fs_nav_t *nav, const char *entry_name, char *out, size_t out_len)
+{
+    if (!nav || !entry_name || !out || out_len == 0 || entry_name[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    int needed = snprintf(out, out_len, "%s/%s", nav->current, entry_name);
+    if (needed < 0 || needed >= (int)out_len) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return ESP_OK;
 }
 
 /**

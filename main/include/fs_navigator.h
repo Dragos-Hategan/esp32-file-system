@@ -164,6 +164,17 @@ fs_nav_sort_mode_t fs_nav_get_sort(const fs_nav_t *nav);
  */
 bool fs_nav_is_sort_ascending(const fs_nav_t *nav);
 
+/**
+ * @brief Compose an absolute path by appending @p entry_name to the current directory.
+ *
+ * @param[in]  nav         Navigator (must be initialized).
+ * @param[in]  entry_name  Child entry name (e.g., from fs_nav_entries()).
+ * @param[out] out         Buffer for the resulting absolute path.
+ * @param[in]  out_len     Size of @p out.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG on bad inputs, ESP_ERR_INVALID_SIZE if buffer is too small.
+ */
+esp_err_t fs_nav_compose_path(const fs_nav_t *nav, const char *entry_name, char *out, size_t out_len);
+
 #ifdef __cplusplus
 }
 #endif
