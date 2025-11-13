@@ -176,9 +176,14 @@ void init_sdspi(void)
     ESP_LOGI(TAG, "SDSPI ready");
 }
 
-esp_err_t file_browser_start(const file_browser_config_t *cfg)
+esp_err_t file_browser_start(void)
 {
-    if (!cfg || !cfg->root_path) {
+    file_browser_config_t browser_cfg = {
+        .root_path = SDSPI_MOUNT_POINT,
+        .max_entries = 512,
+    };
+
+    if (!browser_cfg.root_path) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -187,13 +192,13 @@ esp_err_t file_browser_start(const file_browser_config_t *cfg)
     file_browser_clear_action_state(ctx);
 
     fs_nav_config_t nav_cfg = {
-        .root_path = cfg->root_path,
-        .max_entries = cfg->max_entries ? cfg->max_entries : FILE_BROWSER_MAX_ENTRIES_DEFAULT,
+        .root_path = browser_cfg.root_path,
+        .max_entries = browser_cfg.max_entries ? browser_cfg.max_entries : FILE_BROWSER_MAX_ENTRIES_DEFAULT,
     };
 
     esp_err_t nav_err = fs_nav_init(&ctx->nav, &nav_cfg);
     if (nav_err != ESP_OK) {
-        file_browser_show_error_screen(cfg->root_path, nav_err);
+        file_browser_show_error_screen(browser_cfg.root_path, nav_err);
         return nav_err;
     }
     ctx->initialized = true;

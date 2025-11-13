@@ -81,11 +81,7 @@ static void my_task_function(void *arg)
     freeStack[7] = uxTaskGetStackHighWaterMark(NULL);
 
     /* ----- Launch File Browser ----- */
-    file_browser_config_t browser_cfg = {
-        .root_path = SDSPI_MOUNT_POINT,
-        .max_entries = 512,
-    };
-    esp_err_t fb_err = file_browser_start(&browser_cfg);
+    esp_err_t fb_err = file_browser_start();
     if (fb_err != ESP_OK) {
         ESP_LOGE(TAG, "File browser failed to start: %s", esp_err_to_name(fb_err));
     }

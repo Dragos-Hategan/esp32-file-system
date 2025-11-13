@@ -37,22 +37,19 @@ typedef struct {
 void init_sdspi(void);
 
 /**
- * @brief Create and show the file browser screen.
+ * @brief Create the LVGL file-browser screen using the default SDSPI root.
  *
- * Initializes the navigation context with @p cfg->root_path and builds an LVGL screen
- * containing the path label, sort controls, and an entry list. The screen is loaded
- * immediately.
+ * Initializes the internal navigation context with `SDSPI_MOUNT_POINT`,
+ * builds the LVGL widgets, and loads the screen. The SD card must already
+ * be mounted via `init_sdspi()`.
  *
- * @param[in] cfg File browser configuration (must contain a valid @c root_path).
  * @return
  * - ESP_OK on success
- * - ESP_ERR_INVALID_ARG if @p cfg or @p cfg->root_path is invalid
- * - Error from fs_nav_init on navigation setup failure
- * - ESP_ERR_TIMEOUT if display lock cannot be acquired
- *
- * @post On success, internal context is initialized and visible on the display.
+ * - ESP_ERR_INVALID_ARG if `SDSPI_MOUNT_POINT` is NULL
+ * - Errors propagated from `fs_nav_init`
+ * - ESP_ERR_TIMEOUT if the LVGL display lock cannot be acquired
  */
-esp_err_t file_browser_start(const file_browser_config_t *cfg);
+esp_err_t file_browser_start(void);
 
 #ifdef __cplusplus
 }

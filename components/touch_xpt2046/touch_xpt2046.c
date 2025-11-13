@@ -10,33 +10,6 @@
 #include "esp_lcd_touch_xpt2046.h"
 #include "calibration_xpt2046.h"
 
-#ifndef TOUCH_CS_IO
-#define TOUCH_CS_IO     GPIO_NUM_8
-#endif
-
-#ifndef TOUCH_IRQ_IO
-#define TOUCH_IRQ_IO    GPIO_NUM_11      // active LOW on XPT2046
-#endif
-
-#ifndef TOUCH_SWAP_XY
-#define TOUCH_SWAP_XY 1
-#endif
-
-#ifndef TOUCH_MIRROR_X
-#define TOUCH_MIRROR_X 1
-#endif
-
-#ifndef TOUCH_MIRROR_Y
-#define TOUCH_MIRROR_Y  1
-#endif
-
-static const spi_host_device_t TOUCH_SPI_HOST   = BSP_LCD_SPI_NUM;
-static const gpio_num_t TOUCH_SPI_MISO_IO       = CONFIG_BSP_DISPLAY_MISO_GPIO;
-static const gpio_num_t TOUCH_SPI_MOSI_IO       = CONFIG_BSP_DISPLAY_MOSI_GPIO;
-static const gpio_num_t TOUCH_SPI_SCLK_IO       = CONFIG_BSP_DISPLAY_SCLK_GPIO;
-static const gpio_num_t TOUCH_RST_IO            = -1;
-static const int TOUCH_SPI_HZ                   = (2 * 1000 * 1000);
-
 static esp_lcd_touch_handle_t touch_handle = NULL;
 static lv_indev_t *touch_indev = NULL;
 
@@ -73,35 +46,35 @@ esp_err_t init_touch(void)
     static bool spi_bus_inited = true; // The touch driver shares the SPI bus with ILI9341
     if (!spi_bus_inited){
         spi_bus_config_t buscfg = {
-            .sclk_io_num = TOUCH_SPI_SCLK_IO,
-            .mosi_io_num = TOUCH_SPI_MOSI_IO,
-            .miso_io_num = TOUCH_SPI_MISO_IO,
+            .sclk_io_num = CONFIG_TOUCH_SPI_SCLK_GPIO,
+            .mosi_io_num = CONFIG_TOUCH_SPI_MOSI_GPIO,
+            .miso_io_num = CONFIG_TOUCH_SPI_MISO_GPIO,
             .quadwp_io_num = -1,
             .quadhd_io_num = -1,
             .max_transfer_sz = 0,
             .flags = SPICOMMON_BUSFLAG_MASTER,
         };
-        err = spi_bus_initialize(TOUCH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
+        err = spi_bus_initialize(CONFIG_TOUCH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
         if (err != ESP_OK)
             return err;
     }
 
     /* ----- Create "panel io" IO for touch (uses esp_lcd API) ----- */
     esp_lcd_panel_io_spi_config_t tp_io_cfg = {
-        .cs_gpio_num = TOUCH_CS_IO,
+        .cs_gpio_num = CONFIG_TOUCH_CS_GPIO,
         .dc_gpio_num = -1,
         .spi_mode = 0,
-        .pclk_hz = TOUCH_SPI_HZ,
+        .pclk_hz = CONFIG_TOUCH_SPI_HZ,
         .trans_queue_depth = 3,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .flags = {.lsb_first = 0, .cs_high_active = 0},
     };
     esp_lcd_panel_io_handle_t tp_io = NULL;
-    err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)TOUCH_SPI_HOST, &tp_io_cfg, &tp_io);
+    err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)CONFIG_TOUCH_SPI_HOST, &tp_io_cfg, &tp_io);
     if (err != ESP_OK)
     {
-        spi_bus_free(TOUCH_SPI_HOST);
+        spi_bus_free(CONFIG_TOUCH_SPI_HOST);
         return err;
     }
 
@@ -109,23 +82,23 @@ esp_err_t init_touch(void)
     esp_lcd_touch_config_t tp_cfg = {
         .x_max = TOUCH_X_MAX,
         .y_max = TOUCH_Y_MAX,
-        .rst_gpio_num = TOUCH_RST_IO,
-        .int_gpio_num = TOUCH_IRQ_IO,
+        .rst_gpio_num = CONFIG_TOUCH_RST_GPIO,
+        .int_gpio_num = CONFIG_TOUCH_IRQ_GPIO,
         .levels = {
             .reset = 0,    // LOW reset (if RST used)
             .interrupt = 0 // IRQ active LOW on XPT2046
         },
         .flags = {
-            .swap_xy = TOUCH_SWAP_XY,
-            .mirror_x = TOUCH_MIRROR_X,
-            .mirror_y = TOUCH_MIRROR_Y,
+            .swap_xy = CONFIG_TOUCH_SWAP_XY ? 1 : 0,
+            .mirror_x = CONFIG_TOUCH_MIRROR_X ? 1 : 0,
+            .mirror_y = CONFIG_TOUCH_MIRROR_Y ? 1 : 0,
         },
     };
     err = esp_lcd_touch_new_spi_xpt2046(tp_io, &tp_cfg, &touch_handle);
     if (err != ESP_OK)
     {
         esp_lcd_panel_io_del(tp_io);
-        spi_bus_free(TOUCH_SPI_HOST);
+        spi_bus_free(CONFIG_TOUCH_SPI_HOST);
         return err;
     }
 
