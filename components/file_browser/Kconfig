@@ -8,8 +8,8 @@ menu "SD Card Configuration"
 
     config SDSPI_BUS_HOST
         int "SD SPI host (spi_host_device_t)"
-        range 0 3
-        default 3
+        range 1 2
+        default 2
         help
             SPI host used for the SD card interface.
 

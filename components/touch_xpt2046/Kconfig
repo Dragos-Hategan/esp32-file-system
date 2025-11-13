@@ -2,8 +2,8 @@ menu "Touch controller XPT2046"
     
     config TOUCH_SPI_HOST
         int "Touch SPI host (spi_host_device_t)"
-        range 0 3
-        default 2
+        range 1 2
+        default 1
         help
             SPI host for touch controller.
             Typically same as LCD SPI host.
