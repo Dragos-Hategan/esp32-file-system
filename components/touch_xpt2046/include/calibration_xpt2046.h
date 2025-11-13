@@ -8,16 +8,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "esp_lcd_touch.h"
-#include "bsp/esp-bsp.h"
 #include "lvgl.h"
-
-typedef struct {
-    float xA, xB, xC;   // for x' = xA*x + xB*y + xC
-    float yA, yB, yC;   // for y' = yA*x + yB*y + yC
-    bool valid;
-    uint32_t magic;     // 0xC411B007
-    uint32_t crc32;     // simple, for integrity
-} touch_cal_t;
 
 /**
  * @brief Load touch calibration data from NVS and indicate whether it was found.

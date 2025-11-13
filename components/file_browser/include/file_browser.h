@@ -6,7 +6,6 @@ extern "C" {
 
 #include <stddef.h>
 
-#include "touch_xpt2046.h"
 #include "esp_err.h"
 
 /* ---------------------- SD SPI CONFIG ---------------------- */

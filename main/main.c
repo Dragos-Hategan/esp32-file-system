@@ -44,7 +44,7 @@ static void my_task_function(void *arg)
 {
     ESP_LOGI(TAG, "LVGL File Display");
 
-    UBaseType_t freeStack[10];
+    UBaseType_t freeStack[20];
     freeStack[0] = uxTaskGetStackHighWaterMark(NULL);
 
     /* ----- Init NVS ----- */

@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "bsp/esp-bsp.h"
 #include "esp_log.h"
 #include "nvs.h"
 
@@ -14,7 +15,33 @@
 
 static const int CALIBRATION_MESSAGE_DISPLAY_TIME_MS = 3000;
 
+typedef struct
+{
+    float xA, xB, xC; // for x' = xA*x + xB*y + xC
+    float yA, yB, yC; // for y' = yA*x + yB*y + yC
+    bool valid;
+    uint32_t magic; // 0xC411B007
+    uint32_t crc32; // simple, for integrity
+} touch_cal_t;
+
 static touch_cal_t s_cal = {0};
+
+typedef struct
+{
+    int tx;
+    int ty;
+    int rx;
+    int ry;
+} cal_point_t;
+
+/** @brief 5-point calibration target set (screen-space). */
+static cal_point_t s_cal_points[5] = {
+    {20, 20, 0, 0},                             // top left
+    {TOUCH_X_MAX - 20, 20, 0, 0},               // top right
+    {TOUCH_X_MAX - 20, TOUCH_Y_MAX - 20, 0, 0}, // bottom right
+    {20, TOUCH_Y_MAX - 20, 0, 0},               // bottom left
+    {TOUCH_X_MAX / 2, TOUCH_Y_MAX / 2, 0, 0}    // center
+};
 
 /**
  * @brief Response container passed to button event callbacks of the Yes/No dialog.
@@ -24,13 +51,6 @@ typedef struct
     SemaphoreHandle_t xSemaphore;
     bool response;
 } msg_box_response_t;
-
-typedef struct{ 
-    int tx;
-    int ty; 
-    int rx;
-    int ry; 
-} cal_point_t;
 
 /**
  * @brief Load touch calibration from NVS into the internal state.
@@ -75,7 +95,7 @@ static uint32_t crc32_fast(const void *data, size_t len);
  *
  * The coefficients are solved via least squares over the 5 samples (normal equations),
  * checking for a near-singular system. On success, @ref s_cal is marked valid and saved.
- * 
+ *
  * @warning This function assumes there is no LVGL display lock already acquired.
  */
 static void run_5point_touch_calibration(void);
@@ -87,7 +107,7 @@ static void run_5point_touch_calibration(void);
  *
  * @param[out] rx Averaged raw X.
  * @param[out] ry Averaged raw Y.
- * 
+ *
  */
 static void sample_raw(int *rx, int *ry);
 
@@ -109,7 +129,7 @@ static void ui_show_calibration_message(void);
  * Creates an LVGL message box centered on the active screen with the provided
  * question text and two buttons: **Yes** and **No**. Under the dialog it
  * displays a compact container with the text "Performing Calibration" plus a
- * circular progress arc and a numeric countdown (5 → 1).  
+ * circular progress arc and a numeric countdown (5 → 1).
  * The function blocks the calling task until the user presses a button or the
  * 5-second timeout elapses. On timeout, the result is treated as **Yes**.
  *
@@ -126,7 +146,7 @@ static void ui_show_calibration_message(void);
  * @param question Null-terminated string displayed inside the message box.
  * @return bool
  * @retval true  if the user pressed **Yes** or the countdown timed out
- * @retval false if the user pressed **No** 
+ * @retval false if the user pressed **No**
  *
  * @note The countdown duration is fixed at 5000 ms in this implementation.
  * @warning The function performs blocking waits (semaphore / vTaskDelay).
@@ -197,23 +217,27 @@ void load_nvs_calibration(bool *calibration_found)
 
 void calibration_test(bool calibration_found)
 {
-    if (!calibration_found) {
+    if (!calibration_found)
+    {
         // No calibration saved: runs calibration directly
         run_5point_touch_calibration();
-
-    } else {
+    }
+    else
+    {
         // Run calibration?
         bool run;
         run = ui_yes_no_dialog("Run Touch Screen Calibration?");
 
-        if (run) {
+        if (run)
+        {
             run_5point_touch_calibration();
-
-        } else {
+        }
+        else
+        {
             // We keep s_cal from NVS; we just clear the screen
-            bsp_display_lock(0); 
+            bsp_display_lock(0);
             lv_obj_clean(lv_screen_active());
-            bsp_display_unlock(); 
+            bsp_display_unlock();
         }
     }
 }
@@ -252,6 +276,7 @@ static bool touch_cal_load_nvs(const touch_cal_t *existing_cal)
 
     if (blob.magic != 0xC411B007)
         return false;
+
     uint32_t crc = crc32_fast(&blob, sizeof(blob) - sizeof(blob.crc32));
     if (crc != blob.crc32)
         return false;
@@ -284,6 +309,7 @@ static esp_err_t touch_cal_save_nvs(const touch_cal_t *cal)
     err = nvs_set_blob(h, TOUCH_CAL_NVS_KEY, &blob, sizeof(blob));
     if (err == ESP_OK)
         err = nvs_commit(h);
+    
     nvs_close(h);
     return err;
 }
@@ -300,15 +326,6 @@ static uint32_t crc32_fast(const void *data, size_t len)
     }
     return ~crc;
 }
-
-/** @brief 5-point calibration target set (screen-space). */
-static cal_point_t s_cal_points[5] = {
-    {20, 20, 0, 0},                             // top left
-    {TOUCH_X_MAX - 20, 20, 0, 0},               // top right
-    {TOUCH_X_MAX - 20, TOUCH_Y_MAX - 20, 0, 0}, // bottom right
-    {20, TOUCH_Y_MAX - 20, 0, 0},               // bottom left
-    {TOUCH_X_MAX / 2, TOUCH_Y_MAX / 2, 0, 0}    // center
-};
 
 static void run_5point_touch_calibration(void)
 {
@@ -440,7 +457,7 @@ static void sample_raw(int *rx, int *ry)
     uint32_t sx = 0;
     uint32_t sy = 0;
     uint32_t n = 0;
-    
+
     while (n < 12)
     {
         uint16_t x, y;
@@ -479,13 +496,13 @@ static void ui_show_calibration_message(void)
 
 static bool ui_yes_no_dialog(const char *question)
 {
-    bsp_display_lock(0); 
+    bsp_display_lock(0);
 
     lv_obj_t *scr = lv_screen_active();
     lv_obj_t *mbox1 = lv_msgbox_create(scr);
 
     lv_obj_set_style_max_width(mbox1, lv_pct(90), 0);
-    lv_obj_align(mbox1, LV_ALIGN_CENTER, 0, -50);    
+    lv_obj_align(mbox1, LV_ALIGN_CENTER, 0, -50);
 
     lv_obj_t *label = lv_label_create(mbox1);
     lv_label_set_text(label, question);
@@ -519,13 +536,13 @@ static bool ui_yes_no_dialog(const char *question)
     lv_obj_align(performing_label, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t *loading_arc = lv_arc_create(loader_wrap);
-    lv_obj_set_size(loading_arc, 60, 60);                 // slightly smaller for better proportions
+    lv_obj_set_size(loading_arc, 60, 60); // slightly smaller for better proportions
     lv_arc_set_range(loading_arc, 0, 100);
     lv_arc_set_bg_angles(loading_arc, 0, 360);
     lv_arc_set_rotation(loading_arc, 270);
     lv_arc_set_value(loading_arc, 100);
     lv_obj_remove_style(loading_arc, NULL, LV_PART_KNOB);
-    lv_obj_align_to(loading_arc, performing_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);    
+    lv_obj_align_to(loading_arc, performing_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
 
     lv_obj_t *countdown_label = lv_label_create(loading_arc);
     lv_obj_set_style_text_font(countdown_label, LV_FONT_DEFAULT, 0);
@@ -543,8 +560,10 @@ static bool ui_yes_no_dialog(const char *question)
     int last_second_displayed = 5;
     int last_arc_value = 100;
 
-    while (true) {
-        if (xSemaphoreTake(msg_box_response.xSemaphore, pdMS_TO_TICKS(50)) == pdTRUE) {
+    while (true)
+    {
+        if (xSemaphoreTake(msg_box_response.xSemaphore, pdMS_TO_TICKS(50)) == pdTRUE)
+        {
             break;
         }
 
@@ -552,26 +571,32 @@ static bool ui_yes_no_dialog(const char *question)
         TickType_t elapsed_ticks = now_ticks - start_ticks;
         uint32_t elapsed_ms = elapsed_ticks * portTICK_PERIOD_MS;
 
-        if (elapsed_ticks >= timeout_ticks) {
+        if (elapsed_ticks >= timeout_ticks)
+        {
             msg_box_response.response = true;
             break;
         }
 
         int seconds_left = 5 - (elapsed_ms / 1000);
-        if (seconds_left < 1) {
+        if (seconds_left < 1)
+        {
             seconds_left = 1;
         }
 
         int arc_value = 100 - (int)((elapsed_ms * 100) / countdown_ms);
-        if (arc_value < 0) arc_value = 0;
+        if (arc_value < 0)
+            arc_value = 0;
 
-        if (seconds_left != last_second_displayed || arc_value != last_arc_value) {
+        if (seconds_left != last_second_displayed || arc_value != last_arc_value)
+        {
             bsp_display_lock(0);
-            if (seconds_left != last_second_displayed) {
+            if (seconds_left != last_second_displayed)
+            {
                 lv_label_set_text_fmt(countdown_label, "%d", seconds_left);
                 last_second_displayed = seconds_left;
             }
-            if (arc_value != last_arc_value) {
+            if (arc_value != last_arc_value)
+            {
                 lv_arc_set_value(loading_arc, arc_value);
                 last_arc_value = arc_value;
             }
@@ -581,11 +606,11 @@ static bool ui_yes_no_dialog(const char *question)
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
-    bsp_display_lock(0); 
+    bsp_display_lock(0);
     lv_msgbox_close(mbox1);
     lv_obj_del(performing_label);
     lv_obj_del(loading_arc);
-    bsp_display_unlock(); 
+    bsp_display_unlock();
 
     vSemaphoreDelete(msg_box_response.xSemaphore);
 
@@ -652,7 +677,10 @@ static void make_line(lv_obj_t *parent, const lv_point_precise_t *pts, uint16_t 
 {
     lv_obj_t *l = lv_line_create(parent);
     if (style)
+    {
         lv_obj_add_style(l, style, 0);
+    }
+
     lv_line_set_points(l, pts, cnt);
 }
 
@@ -660,18 +688,18 @@ static void event_cb(lv_event_t *e)
 {
     lv_obj_t *btn = lv_event_get_target(e);
     lv_obj_t *label = lv_obj_get_child(btn, 0);
-    msg_box_response_t *msg_response  = (msg_box_response_t *)lv_event_get_user_data(e);
+    msg_box_response_t *msg_response = (msg_box_response_t *)lv_event_get_user_data(e);
 
     if (strcmp(lv_label_get_text(label), "Yes") == 0)
     {
-        msg_response ->response = true;
+        msg_response->response = true;
     }
     else if (strcmp(lv_label_get_text(label), "No") == 0)
     {
-        msg_response ->response = false;
+        msg_response->response = false;
     }
 
-    xSemaphoreGive(msg_response ->xSemaphore);
+    xSemaphoreGive(msg_response->xSemaphore);
 }
 
 static inline int clampi(int v, int lo, int hi)

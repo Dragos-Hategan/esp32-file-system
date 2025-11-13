@@ -3,11 +3,39 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "driver/spi_master.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
 
 #include "esp_lcd_touch_xpt2046.h"
 #include "calibration_xpt2046.h"
+
+#ifndef TOUCH_CS_IO
+#define TOUCH_CS_IO     GPIO_NUM_8
+#endif
+
+#ifndef TOUCH_IRQ_IO
+#define TOUCH_IRQ_IO    GPIO_NUM_11      // active LOW on XPT2046
+#endif
+
+#ifndef TOUCH_SWAP_XY
+#define TOUCH_SWAP_XY 1
+#endif
+
+#ifndef TOUCH_MIRROR_X
+#define TOUCH_MIRROR_X 1
+#endif
+
+#ifndef TOUCH_MIRROR_Y
+#define TOUCH_MIRROR_Y  1
+#endif
+
+static const spi_host_device_t TOUCH_SPI_HOST   = BSP_LCD_SPI_NUM;
+static const gpio_num_t TOUCH_SPI_MISO_IO       = CONFIG_BSP_DISPLAY_MISO_GPIO;
+static const gpio_num_t TOUCH_SPI_MOSI_IO       = CONFIG_BSP_DISPLAY_MOSI_GPIO;
+static const gpio_num_t TOUCH_SPI_SCLK_IO       = CONFIG_BSP_DISPLAY_SCLK_GPIO;
+static const gpio_num_t TOUCH_RST_IO            = -1;
+static const int TOUCH_SPI_HZ                   = (2 * 1000 * 1000);
 
 static esp_lcd_touch_handle_t touch_handle = NULL;
 static lv_indev_t *touch_indev = NULL;

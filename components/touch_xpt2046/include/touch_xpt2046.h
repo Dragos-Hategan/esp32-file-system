@@ -4,35 +4,16 @@
 extern "C" {
 #endif
 
-#include "driver/spi_master.h"
+#include <stdbool.h>
+
 #include "esp_lcd_touch.h"
+#include "esp_err.h"
 #include "lvgl.h"
 
-#include "file_browser.h"
-
-/* ---------------------- XPT2046 TOUCH CONFIG ---------------------- */
-// SPI Config
-#define TOUCH_SPI_HOST      BSP_LCD_SPI_NUM
-#define TOUCH_SPI_MISO_IO   CONFIG_BSP_DISPLAY_MISO_GPIO
-#define TOUCH_SPI_MOSI_IO   CONFIG_BSP_DISPLAY_MOSI_GPIO
-#define TOUCH_SPI_SCLK_IO   CONFIG_BSP_DISPLAY_SCLK_GPIO
-#define TOUCH_CS_IO         GPIO_NUM_8
-#define TOUCH_IRQ_IO        GPIO_NUM_11      // active LOW on XPT2046
-
-#define TOUCH_RST_IO        -1     
-
-// Panel dimensions and orientation
 #define TOUCH_X_MAX         320
 #define TOUCH_Y_MAX         240
-#define TOUCH_SWAP_XY       true   // for landscape with ILI9341
-#define TOUCH_MIRROR_X      true
-#define TOUCH_MIRROR_Y      true
-
-#define TOUCH_SPI_HZ        (2 * 1000 * 1000)
-
-#define TOUCH_CAL_NVS_NS     "touch_cal"
-#define TOUCH_CAL_NVS_KEY    "affine_v1"
-/* ---------------------- XPT2046 TOUCH CONFIG ---------------------- */
+#define TOUCH_CAL_NVS_NS    "touch_cal"
+#define TOUCH_CAL_NVS_KEY   "affine_v1"
 
 /**
  * @brief Initialize the SPI bus and create the XPT2046 touch driver.
