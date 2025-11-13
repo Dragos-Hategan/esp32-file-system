@@ -46,115 +46,23 @@ static const char *TAG = "text_viewer";
 
 static text_viewer_ctx_t s_viewer;
 
-/**
- * @brief Build all LVGL widgets for the viewer/editor screen.
- *
- * Creates toolbar, labels, text area, and on-screen keyboard.
- * Does not load content or set mode; see @ref text_viewer_open and
- * @ref text_viewer_apply_mode.
- *
- * @param ctx Viewer context (must be non-NULL).
- */
 static void text_viewer_build_screen(text_viewer_ctx_t *ctx);
-
-/**
- * @brief Apply current mode (view vs edit) to widgets and controls.
- *
- * Enables/disables text area, toggles keyboard and save button,
- * then updates button states.
- *
- * @param ctx Viewer context.
- */
 static void text_viewer_apply_mode(text_viewer_ctx_t *ctx);
-
-/**
- * @brief Set a short status message in the toolbar.
- *
- * @param ctx Viewer context.
- * @param msg Null-terminated message string (ignored if NULL).
- */
 static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg);
-
-/**
- * @brief Replace the stored original text snapshot.
- *
- * Frees the previous snapshot and stores a duplicate of @p text.
- *
- * @param ctx  Viewer context.
- * @param text New baseline text (may be NULL, which clears the snapshot).
- */
 static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text);
-
-/**
- * @brief Enable/disable the Save button based on @c editable and @c dirty.
- *
- * @param ctx Viewer context.
- */
 static void text_viewer_update_buttons(text_viewer_ctx_t *ctx);
-
-/**
- * @brief Close the viewer, unload the screen, and invoke the close callback.
- *
- * Resets mode and frees resources (keyboard target, original snapshot).
- *
- * @param ctx     Viewer context.
- * @param changed True if file content was saved/changed (passed to callback).
- */
+static void text_viewer_on_text_area_clicked(lv_event_t *e);
+static void text_viewer_on_screen_clicked(lv_event_t *e);
+static void text_viewer_on_keyboard_cancel(lv_event_t *e);
+static void text_viewer_show_keyboard(text_viewer_ctx_t *ctx);
+static void text_viewer_hide_keyboard(text_viewer_ctx_t *ctx);
 static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed);
-
-/**
- * @brief "Back" button handler—closes the screen or prompts to save/discard.
- *
- * @param e LVGL event.
- */
 static void text_viewer_on_back(lv_event_t *e);
-
-/**
- * @brief Save handler: writes current text to file and closes on success.
- *
- * Logs and shows an error status if the write fails.
- *
- * @param ctx Viewer context.
- */
 static void text_viewer_handle_save(text_viewer_ctx_t *ctx);
-
-/**
- * @brief "Save" button event handler.
- *
- * @param e LVGL event.
- */
 static void text_viewer_on_save(lv_event_t *e);
-
-/**
- * @brief Text change handler: updates @c dirty, Save button, and status.
- *
- * Ignored when not editable or when @c suppress_events is true.
- *
- * @param e LVGL event.
- */
 static void text_viewer_on_text_changed(lv_event_t *e);
-
-/**
- * @brief Show the save/discard/cancel confirmation dialog.
- *
- * No-op if a dialog is already open.
- *
- * @param ctx Viewer context.
- */
 static void text_viewer_show_confirm(text_viewer_ctx_t *ctx);
-
-/**
- * @brief Close and clear the confirmation dialog if present.
- *
- * @param ctx Viewer context.
- */
 static void text_viewer_close_confirm(text_viewer_ctx_t *ctx);
-
-/**
- * @brief Confirmation dialog button handler (Save / Discard / Cancel).
- *
- * @param e LVGL event.
- */
 static void text_viewer_on_confirm(lv_event_t *e);
 
 esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
@@ -195,12 +103,23 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     return ESP_OK;
 }
 
+/**
+ * @brief Build all LVGL widgets for the viewer/editor screen.
+ *
+ * Creates toolbar, labels, text area, and on-screen keyboard.
+ * Does not load content or set mode; see @ref text_viewer_open and
+ * @ref text_viewer_apply_mode.
+ *
+ * @param ctx Viewer context (must be non-NULL).
+ */
 static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_pad_all(scr, 6, 0);
     lv_obj_set_style_pad_gap(scr, 6, 0);
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(scr, text_viewer_on_screen_clicked, LV_EVENT_CLICKED, ctx);
     ctx->screen = scr;
 
     lv_obj_t *toolbar = lv_obj_create(scr);
@@ -234,36 +153,50 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
     lv_obj_set_flex_grow(ctx->text_area, 1);
     lv_textarea_set_cursor_click_pos(ctx->text_area, false);
     lv_obj_set_scrollbar_mode(ctx->text_area, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_width(ctx->text_area, LV_PCT(100));
+   lv_obj_set_width(ctx->text_area, LV_PCT(100));
     lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_changed, LV_EVENT_VALUE_CHANGED, ctx);
+    lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_area_clicked, LV_EVENT_CLICKED, ctx);
 
     ctx->keyboard = lv_keyboard_create(scr);
     lv_keyboard_set_textarea(ctx->keyboard, ctx->text_area);
     lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(ctx->keyboard, text_viewer_on_keyboard_cancel, LV_EVENT_CANCEL, ctx);
 }
 
+/**
+ * @brief Apply current mode (view vs edit) to widgets and controls.
+ *
+ * Enables/disables text area, toggles keyboard and save button,
+ * then updates button states.
+ *
+ * @param ctx Viewer context.
+ */
 static void text_viewer_apply_mode(text_viewer_ctx_t *ctx)
 {
     if (ctx->editable) {
         lv_obj_clear_state(ctx->text_area, LV_STATE_DISABLED);
         lv_textarea_set_cursor_click_pos(ctx->text_area, true);
         lv_obj_add_flag(ctx->text_area, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-        lv_obj_clear_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_keyboard_set_textarea(ctx->keyboard, ctx->text_area);
+        text_viewer_hide_keyboard(ctx);
         lv_obj_clear_flag(ctx->save_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_textarea_set_cursor_pos(ctx->text_area, 0);
     } else {
-        lv_obj_add_state(ctx->text_area, LV_STATE_DISABLED);
         lv_textarea_set_cursor_click_pos(ctx->text_area, false);
         lv_obj_clear_flag(ctx->text_area, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-        lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_keyboard_set_textarea(ctx->keyboard, NULL);
+        text_viewer_hide_keyboard(ctx);
         lv_obj_add_flag(ctx->save_btn, LV_OBJ_FLAG_HIDDEN);
         lv_textarea_clear_selection(ctx->text_area);
-        lv_textarea_set_cursor_pos(ctx->text_area, LV_TEXTAREA_CURSOR_LAST);
     }
+    lv_obj_scroll_to_y(ctx->text_area, 0, LV_ANIM_OFF);
     text_viewer_update_buttons(ctx);
 }
 
+/**
+ * @brief Set a short status message in the toolbar.
+ *
+ * @param ctx Viewer context.
+ * @param msg Null-terminated message string (ignored if NULL).
+ */
 static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg)
 {
     if (ctx->status_label && msg) {
@@ -271,12 +204,25 @@ static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg)
     }
 }
 
+/**
+ * @brief Replace the stored original text snapshot.
+ *
+ * Frees the previous snapshot and stores a duplicate of @p text.
+ *
+ * @param ctx  Viewer context.
+ * @param text New baseline text (may be NULL, which clears the snapshot).
+ */
 static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text)
 {
     free(ctx->original_text);
     ctx->original_text = text ? strdup(text) : NULL;
 }
 
+/**
+ * @brief Enable/disable the Save button based on @c editable and @c dirty.
+ *
+ * @param ctx Viewer context.
+ */
 static void text_viewer_update_buttons(text_viewer_ctx_t *ctx)
 {
     if (!ctx->editable) {
@@ -289,6 +235,113 @@ static void text_viewer_update_buttons(text_viewer_ctx_t *ctx)
     }
 }
 
+/**
+ * @brief Explicitly show the keyboard in edit mode.
+ *
+ * @param ctx Viewer context.
+ */
+static void text_viewer_show_keyboard(text_viewer_ctx_t *ctx)
+{
+    if (!ctx || !ctx->editable) {
+        return;
+    }
+    if (lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN)) {
+        lv_keyboard_set_textarea(ctx->keyboard, ctx->text_area);
+        lv_obj_clear_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/**
+ * @brief Explicitly hide the keyboard and detach it from the textarea.
+ *
+ * @param ctx Viewer context.
+ */
+static void text_viewer_hide_keyboard(text_viewer_ctx_t *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+    if (!lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (lv_keyboard_get_textarea(ctx->keyboard)) {
+        lv_keyboard_set_textarea(ctx->keyboard, NULL);
+    }
+}
+
+/**
+ * @brief Show the keyboard when the text area is tapped in edit mode.
+ *
+ * @param e LVGL event.
+ */
+static void text_viewer_on_text_area_clicked(lv_event_t *e)
+{
+    text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->editable) {
+        return;
+    }
+    text_viewer_show_keyboard(ctx);
+}
+
+/**
+ * @brief Check if a target object is inside (or is) a given parent object.
+ *
+ * @param parent  The LVGL object considered as the potential ancestor.
+ * @param target  The LVGL object whose ancestry is checked.
+ */
+static bool text_viewer_target_in(lv_obj_t *parent, lv_obj_t *target)
+{
+    while (target) {
+        if (target == parent) {
+            return true;
+        }
+        target = lv_obj_get_parent(target);
+    }
+    return false;
+}
+
+/**
+ * @brief Hide the keyboard when tapping outside editable widgets.
+ *
+ * @param e LVGL event.
+ */
+static void text_viewer_on_screen_clicked(lv_event_t *e)
+{
+    text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->editable) {
+        return;
+    }
+    if (lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN)) {
+        return;
+    }
+    lv_obj_t *target = lv_event_get_target(e);
+    if (text_viewer_target_in(ctx->text_area, target) || text_viewer_target_in(ctx->keyboard, target)) {
+        return;
+    }
+    text_viewer_hide_keyboard(ctx);
+}
+
+/**
+ * @brief Hide the keyboard when its cancel/close button is pressed.
+ *
+ * @param e LVGL event.
+ */
+static void text_viewer_on_keyboard_cancel(lv_event_t *e)
+{
+    text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    text_viewer_hide_keyboard(ctx);
+}
+
+/**
+ * @brief Text change handler: updates @c dirty, Save button, and status.
+ *
+ * Ignored when not editable or when @c suppress_events is true.
+ *
+ * @param e LVGL event.
+ */
 static void text_viewer_on_text_changed(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
@@ -305,6 +358,13 @@ static void text_viewer_on_text_changed(lv_event_t *e)
     }
 }
 
+/**
+ * @brief Save handler: writes current text to file and closes on success.
+ *
+ * Logs and shows an error status if the write fails.
+ *
+ * @param ctx Viewer context.
+ */
 static void text_viewer_handle_save(text_viewer_ctx_t *ctx)
 {
     if (!ctx) {
@@ -326,12 +386,22 @@ static void text_viewer_handle_save(text_viewer_ctx_t *ctx)
     text_viewer_close(ctx, true);
 }
 
+/**
+ * @brief "Save" button event handler.
+ *
+ * @param e LVGL event.
+ */
 static void text_viewer_on_save(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
     text_viewer_handle_save(ctx);
 }
 
+/**
+ * @brief "Back" button handler—closes the screen or prompts to save/discard.
+ *
+ * @param e LVGL event.
+ */
 static void text_viewer_on_back(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
@@ -345,6 +415,13 @@ static void text_viewer_on_back(lv_event_t *e)
     text_viewer_close(ctx, false);
 }
 
+/**
+ * @brief Show the save/discard/cancel confirmation dialog.
+ *
+ * No-op if a dialog is already open.
+ *
+ * @param ctx Viewer context.
+ */
 static void text_viewer_show_confirm(text_viewer_ctx_t *ctx)
 {
     if (ctx->confirm_mbox) {
@@ -374,6 +451,11 @@ static void text_viewer_show_confirm(text_viewer_ctx_t *ctx)
     lv_obj_add_event_cb(cancel_btn, text_viewer_on_confirm, LV_EVENT_CLICKED, ctx);
 }
 
+/**
+ * @brief Close and clear the confirmation dialog if present.
+ *
+ * @param ctx Viewer context.
+ */
 static void text_viewer_close_confirm(text_viewer_ctx_t *ctx)
 {
     if (ctx->confirm_mbox) {
@@ -382,6 +464,11 @@ static void text_viewer_close_confirm(text_viewer_ctx_t *ctx)
     }
 }
 
+/**
+ * @brief Confirmation dialog button handler (Save / Discard / Cancel).
+ *
+ * @param e LVGL event.
+ */
 static void text_viewer_on_confirm(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
@@ -397,6 +484,14 @@ static void text_viewer_on_confirm(lv_event_t *e)
     }
 }
 
+/**
+ * @brief Close the viewer, unload the screen, and invoke the close callback.
+ *
+ * Resets mode and frees resources (keyboard target, original snapshot).
+ *
+ * @param ctx     Viewer context.
+ * @param changed True if file content was saved/changed (passed to callback).
+ */
 static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed)
 {
     text_viewer_close_confirm(ctx);
