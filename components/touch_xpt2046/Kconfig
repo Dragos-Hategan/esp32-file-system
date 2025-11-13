@@ -5,15 +5,15 @@ menu "Touch controller XPT2046"
         range 0 3
         default 2
         help
-        SPI host for touch controller.
-        Typically same as LCD SPI host.
+            SPI host for touch controller.
+            Typically same as LCD SPI host.
 
     config TOUCH_SPI_HZ
         int "Touch SPI clock (Hz)"
         range 100000 26000000
         default 2000000
         help
-        SPI clock for the touch controller.     
+            SPI clock for the touch controller.     
         
     config TOUCH_SPI_MISO_GPIO
         int "Touch SPI MISO GPIO"
@@ -35,15 +35,15 @@ menu "Touch controller XPT2046"
         range -1 47
         default -1
         help
-        GPIO number for the touch controller chip select pin.
+            GPIO number for the touch controller chip select pin.
 
     config TOUCH_IRQ_GPIO
         int "Touch IRQ GPIO"
         range -1 47
         default -1
         help
-        GPIO number for touch IRQ (active LOW on XPT2046).
-        Use -1 to disable IRQ pin.
+            GPIO number for touch IRQ (active LOW on XPT2046).
+            Use -1 to disable IRQ pin.
 
     config TOUCH_RST_GPIO
         int "Touch reset GPIO (-1 to disable)"

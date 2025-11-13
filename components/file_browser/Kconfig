@@ -4,48 +4,48 @@ menu "SD Card Configuration"
         string "SD card mount point"
         default "/sdcard"
         help
-        Path where the SD card will be mounted in the VFS.  
+            Path where the SD card will be mounted in the VFS.  
 
     config SDSPI_BUS_HOST
         int "SD SPI host (spi_host_device_t)"
         range 0 3
         default 3
         help
-        SPI host used for the SD card interface.
+            SPI host used for the SD card interface.
 
     config SDSPI_MAX_FREQ_KHZ
         int "SD SPI clock (KHz)"
         range 400 25000
         default 20000
         help
-        Clock frequency for the SD card SPI interface.    
+            Clock frequency for the SD card SPI interface.    
         
     config SDSPI_BUS_MISO_PIN
         int "SD SPI MISO GPIO"
         range -1 47
         default -1
         help 
-        GPIO number for MISO line of the SD card SPI bus.
+            GPIO number for MISO line of the SD card SPI bus.
 
     config SDSPI_BUS_MOSI_PIN
         int "SD SPI MOSI GPIO"
         range -1 47
         default -1
         help
-        GPIO number for MOSI line of the SD card SPI bus.
+            GPIO number for MOSI line of the SD card SPI bus.
 
     config SPSPI_BUS_SCL_PIN
         int "SD SPI SCLK GPIO"
         range -1 47
         default -1   
         help
-        GPIO number for SCLK line of the SD card SPI bus.     
+            GPIO number for SCLK line of the SD card SPI bus.     
 
     config SDSPI_DEVICE_CS_PIN
         int "SD card CS GPIO"
         range -1 47
         default -1
         help
-        GPIO number for the SD card chip-select pin.
+            GPIO number for the SD card chip-select pin.
 
 endmenu
