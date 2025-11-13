@@ -1,6 +1,6 @@
 menu "SD Card Configuration"
     
-    config CONFIG_SDSPI_MOUNT_POINT
+    config SDSPI_MOUNT_POINT
         string "SD card mount point"
         default "/sdcard"
         help
