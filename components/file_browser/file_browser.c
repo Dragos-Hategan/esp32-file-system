@@ -61,18 +61,96 @@ typedef struct {
     bool suppress_click;
 } file_browser_ctx_t;
 
- static file_browser_ctx_t s_browser;
+static file_browser_ctx_t s_browser;
+static sdmmc_card_t *s_sd_card = NULL;
+static bool s_spi_bus_ready = false;
 
 /************************************ UI & Data Refresh Helpers ***********************************/
 
+/**
+ * @brief Build the LVGL screen hierarchy (header + list).
+ *
+ * Creates the root screen and child widgets (path label, sort buttons, list).
+ *
+ * @param[in,out] ctx Browser context (must be non-NULL).
+ * @internal UI construction only; does not query filesystem.
+ */
  static void file_browser_build_screen(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Synchronize all UI elements with the current navigation state.
+ *
+ * Updates path, sort badges, and repopulates the list with current entries.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_sync_view(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Update the path label from the current navigator path.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_update_path_label(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Update the sort mode and direction badges.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_update_sort_badges(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Convert a sort mode enum to human-readable text.
+ *
+ * @param mode Sort mode.
+ * @return Constant C-string: "Name", "Date", or "Size".
+ */
  static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode);
+
+/**
+ * @brief Rebuild the entry list from current directory contents.
+ *
+ * Adds a parent navigation item (if applicable) and then one button per entry.
+ * For files, a formatted size is shown; for directories, "Folder" is shown.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_populate_list(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Format a byte size into a short human-friendly string.
+ *
+ * Uses B/KB/MB/GB up to 1 decimal place for KB or larger.
+ *
+ * @param bytes   Size in bytes.
+ * @param[out] out Output buffer for the formatted text.
+ * @param out_len Length of @p out.
+ */
  static void file_browser_format_size(size_t bytes, char *out, size_t out_len);
+
+/**
+ * @brief Show a minimal error screen when the storage root is not available.
+ *
+ * Used when @c fs_nav_init fails. Shows path and error name.
+ *
+ * @param root_path Root path attempted.
+ * @param err       Error that occurred.
+ * @note Acquires the display lock internally (non-blocking timeout = 0).
+ */
  static void file_browser_show_error_screen(const char *root_path, esp_err_t err);
+
+/**
+ * @brief Refresh the current directory view and redraw the list.
+ *
+ * Re-reads directory entries via @c fs_nav_refresh and repopulates the LVGL list.
+ *
+ * @return
+ * - ESP_OK on success
+ * - ESP_ERR_INVALID_STATE if the browser was not started
+ * - Error from @c fs_nav_refresh
+ * - ESP_ERR_TIMEOUT if display lock cannot be acquired
+ */
  static esp_err_t file_browser_reload(void);
 
 /**************************************************************************************************/
@@ -80,12 +158,70 @@ typedef struct {
 
 /***************************** List Interactions & Text Editor Bridge *****************************/
 
+/**
+ * @brief Entry click handler: enter directories or log selected file.
+ *
+ * If the clicked entry is a directory, enters it and refreshes the view.
+ * If it is a file, only logs selection.
+ *
+ * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_entry_click(lv_event_t *e);
+
+/**
+ * @brief Long-press handler for a list entry to open the action menu.
+ *
+ * Marks the click as suppressed (to avoid triggering the normal click handler),
+ * resolves the pressed entry index, prepares the action entry and shows
+ * the action menu.
+ *
+ * @param e LVGL event (LV_EVENT_LONG_PRESSED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_entry_long_press(lv_event_t *e);
+
+/**
+ * @brief Parent button handler: go up one level (if possible).
+ *
+ * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_parent_click(lv_event_t *e);
+
+/**
+ * @brief Sort-mode button handler: cycle sort mode and refresh list.
+ *
+ * Order cycles through Name → Date → Size (per @c FS_NAV_SORT_COUNT).
+ *
+ * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_sort_mode_click(lv_event_t *e);
+
+/**
+ * @brief Sort-direction button handler: toggle ascending/descending and refresh list.
+ *
+ * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_sort_dir_click(lv_event_t *e);
+
+/**
+ * @brief "New TXT" button handler: open an editor for a new text file.
+ *
+ * Uses the current navigator path as parent directory and opens the text editor
+ * with a suggested default filename. On close, the browser is notified via
+ * @c file_browser_editor_closed().
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_new_txt_click(lv_event_t *e);
+
+/**
+ * @brief Callback invoked when the text editor/viewer screen is closed.
+ *
+ * If the content was changed, triggers a browser reload to reflect updates
+ * (file size, timestamp, new file, etc.).
+ *
+ * @param changed  True if the editor modified the file.
+ * @param user_ctx User context, expected to be @c file_browser_ctx_t*.
+ */
  static void file_browser_editor_closed(bool changed, void *user_ctx);
 
 /**************************************************************************************************/
@@ -93,14 +229,99 @@ typedef struct {
 
 /************************************* Folder Creation Dialog *************************************/
 
+/**
+ * @brief "New Folder" button handler: show the folder creation dialog.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_new_folder_click(lv_event_t *e);
+
+/**
+ * @brief Show the "Create folder" dialog overlay.
+ *
+ * Creates a semi-transparent overlay with a card containing title, status label,
+ * folder-name text area, action buttons and an on-screen keyboard. The dialog is
+ * stored in @c ctx->folder_dialog and related pointers.
+ *
+ * @param[in,out] ctx Browser context that owns the dialog.
+ */
  static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Close and destroy the "Create folder" dialog overlay.
+ *
+ * Deletes the overlay object and clears all folder dialog-related pointers
+ * in the context.
+ *
+ * @param[in,out] ctx Browser context that owns the dialog.
+ */
  static void file_browser_close_folder_dialog(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Handle the folder creation action from the dialog.
+ *
+ * Triggered either by the "Create" button or keyboard READY event.
+ * Validates the folder name, attempts to create it and updates status text
+ * on error. On success, closes the dialog and reloads the browser view.
+ *
+ * @param e LVGL event with user data = @c file_browser_ctx_t*.
+ */
 static void file_browser_on_folder_create(lv_event_t *e);
+
+/**
+ * @brief Cancel handler for the "Create folder" dialog.
+ *
+ * Simply closes the dialog without creating a folder.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
 static void file_browser_on_folder_cancel(lv_event_t *e);
+
+/**
+ * @brief Set status message and color in the "Create folder" dialog.
+ *
+ * Updates the folder status label text and chooses an error or neutral color
+ * depending on the @p error flag.
+ *
+ * @param[in,out] ctx Browser context owning the folder status label.
+ * @param msg         Message text to display (must be non-NULL).
+ * @param error       True to use an error color, false for neutral/info color.
+ */
 static void file_browser_set_folder_status(file_browser_ctx_t *ctx, const char *msg, bool error);
+
+/**
+ * @brief Create a folder in the current directory with the given name.
+ *
+ * Uses @c fs_nav_compose_path() to generate an absolute path and calls @c mkdir().
+ *
+ * @param[in,out] ctx Browser context providing the current path.
+ * @param name        Folder name (already validated).
+ * @return ESP_OK on success,
+ *         ESP_ERR_INVALID_STATE if the folder already exists,
+ *         ESP_FAIL on generic failure or errno-based errors.
+ */
 static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char *name);
+
+/**
+ * @brief Handles the cancel action from the folder creation keyboard.
+ *
+ * This callback is triggered when the user cancels or closes the keyboard
+ * during folder creation. The function detaches the keyboard from the
+ * textarea and hides the keyboard widget.
+ *
+ * @param e Pointer to the LVGL event descriptor.
+ */
 static void file_browser_on_folder_keyboard_cancel(lv_event_t *e);
+
+/**
+ * @brief Shows the keyboard when the folder creation textarea is clicked.
+ *
+ * This callback is triggered when the user taps the folder name textarea.
+ * It associates the on-screen keyboard with the textarea and makes the
+ * keyboard visible for text input.
+ *
+ * @param e Pointer to the LVGL event descriptor.
+ */
 static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 
 /**************************************************************************************************/
@@ -108,8 +329,40 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 
 /*********************************** Filesystem Utility Helpers ***********************************/
 
+/**
+ * @brief Check if a given name is a valid filesystem entry name.
+ *
+ * Rejects empty strings and names containing '\', '/', ':', '*', '?', '"', '<', '>' or '|'.
+ *
+ * @param name Candidate name string.
+ * @return true if the name is valid, false otherwise.
+ */
  static bool file_browser_is_valid_name(const char *name);
+
+/**
+ * @brief Trim leading and trailing whitespace characters from a string in-place.
+ *
+ * Whitespace considered: space, tab, newline and carriage return.
+ *
+ * @param[in,out] name String buffer to trim; may be shifted in memory.
+ */
  static void file_browser_trim_whitespace(char *name);
+
+/**
+ * @brief Recursively delete a path, which may be a file or directory tree.
+ *
+ * Uses @c stat() to determine whether the path is a directory. If so, iterates
+ * over entries with @c opendir()/readdir(), recursively deletes children and
+ * finally removes the directory. If it is a file, calls @c remove().
+ *
+ * Missing paths (ENOENT) are treated as success.
+ *
+ * @param path Path to delete (must be non-empty string).
+ * @return ESP_OK on success,
+ *         ESP_ERR_INVALID_ARG for invalid input,
+ *         ESP_ERR_INVALID_SIZE if child path buffer would overflow,
+ *         ESP_FAIL on other filesystem/errno-based errors.
+ */
  static esp_err_t file_browser_delete_path(const char *path);
 
 /**************************************************************************************************/
@@ -117,13 +370,85 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 
 /************************************** Action Menu Workflow **************************************/
 
+/**
+ * @brief Populate @c action_entry from a selected navigator entry.
+ *
+ * Copies flags, name and current directory into the context action entry
+ * and marks it active.
+ *
+ * @param[in,out] ctx Browser context.
+ * @param entry       Navigator entry to copy from.
+ */
  static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry);
+
+/**
+ * @brief Show the action menu (Rename/Delete/Edit/Cancel) for current entry.
+ *
+ * Creates a message box containing the entry name and one or two button rows
+ * depending on whether the entry is editable text or not.
+ *
+ * @param[in,out] ctx Browser context with an active @c action_entry.
+ */
  static void file_browser_show_action_menu(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Close and clear the currently open action menu message box.
+ *
+ * If an action message box is present, closes it and nulls the pointer.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_close_action_menu(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Handler for action menu buttons (Edit/Rename/Delete/Cancel).
+ *
+ * Reads the @c file_browser_action_type_t from button user data and performs
+ * the corresponding action (open editor, show rename dialog, show delete
+ * confirm, or cancel).
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_action_button(lv_event_t *e);
+
+/**
+ * @brief Show a Yes/No confirmation dialog for deleting the selected entry.
+ *
+ * Creates a message box with the entry name in the prompt and two footer
+ * buttons: "Yes" and "No".
+ *
+ * @param[in,out] ctx Browser context with an active @c action_entry.
+ */
  static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Close and clear the delete confirmation message box.
+ *
+ * If a confirmation message box is present, closes it and nulls the pointer.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Handler for delete confirmation buttons ("Yes"/"No").
+ *
+ * If confirmed, attempts to delete the selected entry. Otherwise, clears
+ * the action state.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
  static void file_browser_on_delete_confirm(lv_event_t *e);
+
+/**
+ * @brief Delete the currently selected action entry and reload the browser.
+ *
+ * Composes the full path, recursively deletes the target (if directory) and
+ * reloads the file browser view on success.
+ *
+ * @param[in,out] ctx Browser context with an active @c action_entry.
+ * @return ESP_OK on success or appropriate error code.
+ */
  static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx);
 
 /**************************************************************************************************/
@@ -131,7 +456,28 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 
 /************************************* Action State Utilities *************************************/
 
+/**
+ * @brief Compose a full filesystem path from @c action_entry.directory and name.
+ *
+ * Assembles "<directory>/<name>" into the provided output buffer.
+ *
+ * @param ctx      Browser context with an active @c action_entry.
+ * @param[out] out Output buffer for the composed path.
+ * @param out_len  Size of @p out buffer in bytes.
+ * @return ESP_OK on success,
+ *         ESP_ERR_INVALID_STATE if state is invalid,
+ *         ESP_ERR_INVALID_SIZE if the buffer is too small.
+ */
  static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len);
+
+/**
+ * @brief Clear all transient action-related state from the context.
+ *
+ * Closes action and confirm dialogs, closes rename dialog and resets
+ * the @c action_entry fields.
+ *
+ * @param[in,out] ctx Browser context.
+ */
  static void file_browser_clear_action_state(file_browser_ctx_t *ctx);
 
 /**************************************************************************************************/
@@ -139,19 +485,91 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 
 /************************************* Rename Dialog Workflow *************************************/
 
+/**
+ * @brief Set status text and color in the rename dialog using the title label.
+ *
+ * @param[in,out] ctx Browser context.
+ * @param msg         Message text to display (must be non-NULL).
+ * @param error       True to use error color, false for neutral/info color.
+ */
  static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *msg, bool error);
+
+/**
+ * @brief Show the rename dialog for the currently selected entry.
+ *
+ * Builds an overlay with a card containing the current entry name, a status label,
+ * a text area prefilled with the existing name and a "Save"/"Cancel" button row,
+ * plus an on-screen keyboard. Any existing rename dialog is closed first.
+ *
+ * @param[in,out] ctx Browser context with a valid @c action_entry.
+ */
  static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Close and destroy the rename dialog overlay.
+ *
+ * Deletes the dialog overlay and clears all rename dialog-related pointers
+ * in the context.
+ *
+ * @param[in,out] ctx Browser context that owns the dialog.
+ */
 static void file_browser_close_rename_dialog(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Accept handler for the rename dialog (button or keyboard).
+ *
+ * Validates the new name, checks for no-op, attempts rename via
+ * @c file_browser_perform_rename(), displays any errors in the dialog and,
+ * on success, closes the dialog and reloads the browser.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED or LV_EVENT_READY) with user data = @c file_browser_ctx_t*.
+ */
 static void file_browser_on_rename_accept(lv_event_t *e);
+
+/**
+ * @brief Cancel handler for the rename dialog.
+ *
+ * Closes the dialog and clears action state without renaming.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
 static void file_browser_on_rename_cancel(lv_event_t *e);
+
+/**
+ * @brief Perform the actual filesystem rename for the current action entry.
+ *
+ * Builds the old and new paths and calls @c rename(). If the destination
+ * already exists, returns ESP_ERR_INVALID_STATE.
+ *
+ * @param[in,out] ctx   Browser context with an active @c action_entry.
+ * @param new_name      New entry name (validated, non-empty).
+ * @return ESP_OK on success or an appropriate ESP_ERR_* code on failure.
+ */
 static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name);
+
+/**
+ * @brief Handles the cancel action from the rename keyboard.
+ *
+ * This event callback is triggered when the user closes or cancels the
+ * on-screen keyboard during the rename operation. It detaches the textarea
+ * from the keyboard and hides the keyboard widget.
+ *
+ * @param e Pointer to the LVGL event descriptor.
+ */
 static void file_browser_on_rename_keyboard_cancel(lv_event_t *e);
+
+/**
+ * @brief Displays the rename keyboard when the rename textarea is clicked.
+ *
+ * This event callback is triggered when the user taps the rename textarea.
+ * It attaches the textarea to the on-screen keyboard and ensures the keyboard
+ * becomes visible for text input.
+ *
+ * @param e Pointer to the LVGL event descriptor.
+ */
 static void file_browser_on_rename_textarea_clicked(lv_event_t *e);
 
 /**************************************************************************************************/
-
-static sdmmc_card_t *s_sd_card = NULL;
-static bool s_spi_bus_ready = false;
 
 void init_sdspi(void)
 {
@@ -244,17 +662,6 @@ esp_err_t file_browser_start(void)
     return ESP_OK;
 }
 
-/**
- * @brief Refresh the current directory view and redraw the list.
- *
- * Re-reads directory entries via @c fs_nav_refresh and repopulates the LVGL list.
- *
- * @return
- * - ESP_OK on success
- * - ESP_ERR_INVALID_STATE if the browser was not started
- * - Error from @c fs_nav_refresh
- * - ESP_ERR_TIMEOUT if display lock cannot be acquired
- */
 static esp_err_t file_browser_reload(void)
 {
     file_browser_ctx_t *ctx = &s_browser;
@@ -276,14 +683,6 @@ static esp_err_t file_browser_reload(void)
     return ESP_OK;
 }
 
-/**
- * @brief Build the LVGL screen hierarchy (header + list).
- *
- * Creates the root screen and child widgets (path label, sort buttons, list).
- *
- * @param[in,out] ctx Browser context (must be non-NULL).
- * @internal UI construction only; does not query filesystem.
- */
 static void file_browser_build_screen(file_browser_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -346,13 +745,6 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_pad_all(ctx->list, 0, 0);
 }
 
-/**
- * @brief Synchronize all UI elements with the current navigation state.
- *
- * Updates path, sort badges, and repopulates the list with current entries.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_sync_view(file_browser_ctx_t *ctx)
 {
     if (!ctx->screen) {
@@ -363,36 +755,18 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     file_browser_populate_list(ctx);
 }
 
-/**
- * @brief Update the path label from the current navigator path.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
 {
     const char *path = fs_nav_current_path(&ctx->nav);
     lv_label_set_text(ctx->path_label, path ? path : "-");
 }
 
-/**
- * @brief Update the sort mode and direction badges.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)
 {
     lv_label_set_text(ctx->sort_mode_label, file_browser_sort_mode_text(fs_nav_get_sort(&ctx->nav)));
     lv_label_set_text(ctx->sort_dir_label, fs_nav_is_sort_ascending(&ctx->nav) ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
 }
 
-/**
- * @brief Rebuild the entry list from current directory contents.
- *
- * Adds a parent navigation item (if applicable) and then one button per entry.
- * For files, a formatted size is shown; for directories, "Folder" is shown.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_populate_list(file_browser_ctx_t *ctx)
 {
     lv_obj_clean(ctx->list);
@@ -433,12 +807,6 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
     }
 }
 
-/**
- * @brief Convert a sort mode enum to human-readable text.
- *
- * @param mode Sort mode.
- * @return Constant C-string: "Name", "Date", or "Size".
- */
 static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode)
 {
     switch (mode) {
@@ -452,15 +820,6 @@ static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode)
     }
 }
 
-/**
- * @brief Format a byte size into a short human-friendly string.
- *
- * Uses B/KB/MB/GB up to 1 decimal place for KB or larger.
- *
- * @param bytes   Size in bytes.
- * @param[out] out Output buffer for the formatted text.
- * @param out_len Length of @p out.
- */
 static void file_browser_format_size(size_t bytes, char *out, size_t out_len)
 {
     static const char *suffixes[] = {"B", "KB", "MB", "GB"};
@@ -477,14 +836,6 @@ static void file_browser_format_size(size_t bytes, char *out, size_t out_len)
     }
 }
 
-/**
- * @brief Entry click handler: enter directories or log selected file.
- *
- * If the clicked entry is a directory, enters it and refreshes the view.
- * If it is a file, only logs selection.
- *
- * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_entry_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -538,15 +889,6 @@ static void file_browser_on_entry_click(lv_event_t *e)
     ESP_LOGI(TAG, "File selected (no handler): %s (%zu bytes)", entry->name, entry->size_bytes);
 }
 
-/**
- * @brief Long-press handler for a list entry to open the action menu.
- *
- * Marks the click as suppressed (to avoid triggering the normal click handler),
- * resolves the pressed entry index, prepares the action entry and shows
- * the action menu.
- *
- * @param e LVGL event (LV_EVENT_LONG_PRESSED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_entry_long_press(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -570,11 +912,6 @@ static void file_browser_on_entry_long_press(lv_event_t *e)
     file_browser_show_action_menu(ctx);
 }
 
-/**
- * @brief Parent button handler: go up one level (if possible).
- *
- * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_parent_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -590,15 +927,6 @@ static void file_browser_on_parent_click(lv_event_t *e)
     }
 }
 
-/**
- * @brief Callback invoked when the text editor/viewer screen is closed.
- *
- * If the content was changed, triggers a browser reload to reflect updates
- * (file size, timestamp, new file, etc.).
- *
- * @param changed  True if the editor modified the file.
- * @param user_ctx User context, expected to be @c file_browser_ctx_t*.
- */
 static void file_browser_editor_closed(bool changed, void *user_ctx)
 {
     file_browser_ctx_t *ctx = (file_browser_ctx_t *)user_ctx;
@@ -612,13 +940,6 @@ static void file_browser_editor_closed(bool changed, void *user_ctx)
     }
 }
 
-/**
- * @brief Sort-mode button handler: cycle sort mode and refresh list.
- *
- * Order cycles through Name → Date → Size (per @c FS_NAV_SORT_COUNT).
- *
- * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_sort_mode_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -635,11 +956,6 @@ static void file_browser_on_sort_mode_click(lv_event_t *e)
     }
 }
 
-/**
- * @brief Sort-direction button handler: toggle ascending/descending and refresh list.
- *
- * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_sort_dir_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -654,15 +970,6 @@ static void file_browser_on_sort_dir_click(lv_event_t *e)
     }
 }
 
-/**
- * @brief "New TXT" button handler: open an editor for a new text file.
- *
- * Uses the current navigator path as parent directory and opens the text editor
- * with a suggested default filename. On close, the browser is notified via
- * @c file_browser_editor_closed().
- *
- * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_new_txt_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -689,11 +996,6 @@ static void file_browser_on_new_txt_click(lv_event_t *e)
     }
 }
 
-/**
- * @brief "New Folder" button handler: show the folder creation dialog.
- *
- * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_new_folder_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -703,15 +1005,6 @@ static void file_browser_on_new_folder_click(lv_event_t *e)
     file_browser_show_folder_dialog(ctx);
 }
 
-/**
- * @brief Show a minimal error screen when the storage root is not available.
- *
- * Used when @c fs_nav_init fails. Shows path and error name.
- *
- * @param root_path Root path attempted.
- * @param err       Error that occurred.
- * @note Acquires the display lock internally (non-blocking timeout = 0).
- */
 static void file_browser_show_error_screen(const char *root_path, esp_err_t err)
 {
     if (!bsp_display_lock(0)) {
@@ -738,15 +1031,6 @@ static void file_browser_show_error_screen(const char *root_path, esp_err_t err)
     bsp_display_unlock();
 }
 
-/**
- * @brief Show the "Create folder" dialog overlay.
- *
- * Creates a semi-transparent overlay with a card containing title, status label,
- * folder-name text area, action buttons and an on-screen keyboard. The dialog is
- * stored in @c ctx->folder_dialog and related pointers.
- *
- * @param[in,out] ctx Browser context that owns the dialog.
- */
 static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx)
 {
     if (ctx->folder_dialog) {
@@ -824,14 +1108,6 @@ static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx)
     lv_obj_align(dlg, LV_ALIGN_TOP_MID, 0, margin);
 }
 
-/**
- * @brief Close and destroy the "Create folder" dialog overlay.
- *
- * Deletes the overlay object and clears all folder dialog-related pointers
- * in the context.
- *
- * @param[in,out] ctx Browser context that owns the dialog.
- */
 static void file_browser_close_folder_dialog(file_browser_ctx_t *ctx)
 {
     if (!ctx->folder_dialog) {
@@ -843,16 +1119,6 @@ static void file_browser_close_folder_dialog(file_browser_ctx_t *ctx)
     ctx->folder_keyboard = NULL;
 }
 
-/**
- * @brief Set status message and color in the "Create folder" dialog.
- *
- * Updates the folder status label text and chooses an error or neutral color
- * depending on the @p error flag.
- *
- * @param[in,out] ctx Browser context owning the folder status label.
- * @param msg         Message text to display (must be non-NULL).
- * @param error       True to use an error color, false for neutral/info color.
- */
 static void file_browser_set_folder_status(file_browser_ctx_t *ctx, const char *msg, bool error)
 {
     if (!ctx || !ctx->folder_dialog || !msg) {
@@ -896,15 +1162,6 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e)
     lv_obj_clear_flag(ctx->folder_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
-/**
- * @brief Handle the folder creation action from the dialog.
- *
- * Triggered either by the "Create" button or keyboard READY event.
- * Validates the folder name, attempts to create it and updates status text
- * on error. On success, closes the dialog and reloads the browser view.
- *
- * @param e LVGL event with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_folder_create(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -945,13 +1202,6 @@ static void file_browser_on_folder_create(lv_event_t *e)
     }
 }
 
-/**
- * @brief Cancel handler for the "Create folder" dialog.
- *
- * Simply closes the dialog without creating a folder.
- *
- * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_folder_cancel(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -961,13 +1211,6 @@ static void file_browser_on_folder_cancel(lv_event_t *e)
     file_browser_close_folder_dialog(ctx);
 }
 
-/**
- * @brief Set status text and color in the rename dialog using the title label.
- *
- * @param[in,out] ctx Browser context.
- * @param msg         Message text to display (must be non-NULL).
- * @param error       True to use error color, false for neutral/info color.
- */
 static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *msg, bool error)
 {
     if (!ctx || !ctx->rename_dialog || !msg) {
@@ -991,15 +1234,6 @@ static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *
     lv_label_set_text(title, msg);
 }
 
-/**
- * @brief Show the rename dialog for the currently selected entry.
- *
- * Builds an overlay with a card containing the current entry name, a status label,
- * a text area prefilled with the existing name and a "Save"/"Cancel" button row,
- * plus an on-screen keyboard. Any existing rename dialog is closed first.
- *
- * @param[in,out] ctx Browser context with a valid @c action_entry.
- */
 static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx)
 {
     if (!ctx || !ctx->action_entry.active) {
@@ -1076,14 +1310,6 @@ static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx)
     lv_obj_align(dlg, LV_ALIGN_TOP_MID, 0, margin);
 }
 
-/**
- * @brief Close and destroy the rename dialog overlay.
- *
- * Deletes the dialog overlay and clears all rename dialog-related pointers
- * in the context.
- *
- * @param[in,out] ctx Browser context that owns the dialog.
- */
 static void file_browser_close_rename_dialog(file_browser_ctx_t *ctx)
 {
     if (!ctx || !ctx->rename_dialog) {
@@ -1095,17 +1321,6 @@ static void file_browser_close_rename_dialog(file_browser_ctx_t *ctx)
     ctx->rename_keyboard = NULL;
 }
 
-/**
- * @brief Create a folder in the current directory with the given name.
- *
- * Uses @c fs_nav_compose_path() to generate an absolute path and calls @c mkdir().
- *
- * @param[in,out] ctx Browser context providing the current path.
- * @param name        Folder name (already validated).
- * @return ESP_OK on success,
- *         ESP_ERR_INVALID_STATE if the folder already exists,
- *         ESP_FAIL on generic failure or errno-based errors.
- */
 static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char *name)
 {
     char path[FS_NAV_MAX_PATH];
@@ -1124,14 +1339,6 @@ static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char 
     return ESP_OK;
 }
 
-/**
- * @brief Check if a given name is a valid filesystem entry name.
- *
- * Rejects empty strings and names containing '\', '/', ':', '*', '?', '"', '<', '>' or '|'.
- *
- * @param name Candidate name string.
- * @return true if the name is valid, false otherwise.
- */
 static bool file_browser_is_valid_name(const char *name)
 {
     if (!name || name[0] == '\0') {
@@ -1150,13 +1357,6 @@ static bool file_browser_is_valid_name(const char *name)
     return true;
 }
 
-/**
- * @brief Trim leading and trailing whitespace characters from a string in-place.
- *
- * Whitespace considered: space, tab, newline and carriage return.
- *
- * @param[in,out] name String buffer to trim; may be shifted in memory.
- */
 static void file_browser_trim_whitespace(char *name)
 {
     if (!name) {
@@ -1175,15 +1375,6 @@ static void file_browser_trim_whitespace(char *name)
     }
 }
 
-/**
- * @brief Populate @c action_entry from a selected navigator entry.
- *
- * Copies flags, name and current directory into the context action entry
- * and marks it active.
- *
- * @param[in,out] ctx Browser context.
- * @param entry       Navigator entry to copy from.
- */
 static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
 {
     if (!ctx || !entry) {
@@ -1200,13 +1391,6 @@ static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_
     strlcpy(ctx->action_entry.directory, dir, sizeof(ctx->action_entry.directory));
 }
 
-/**
- * @brief Close and clear the currently open action menu message box.
- *
- * If an action message box is present, closes it and nulls the pointer.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_close_action_menu(file_browser_ctx_t *ctx)
 {
     if (ctx && ctx->action_mbox) {
@@ -1215,14 +1399,6 @@ static void file_browser_close_action_menu(file_browser_ctx_t *ctx)
     }
 }
 
-/**
- * @brief Show the action menu (Rename/Delete/Edit/Cancel) for current entry.
- *
- * Creates a message box containing the entry name and one or two button rows
- * depending on whether the entry is editable text or not.
- *
- * @param[in,out] ctx Browser context with an active @c action_entry.
- */
 static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
 {
     if (!ctx || !ctx->action_entry.active) {
@@ -1303,14 +1479,6 @@ static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
     }
 }
 
-/**
- * @brief Clear all transient action-related state from the context.
- *
- * Closes action and confirm dialogs, closes rename dialog and resets
- * the @c action_entry fields.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_clear_action_state(file_browser_ctx_t *ctx)
 {
     if (!ctx) {
@@ -1326,15 +1494,6 @@ static void file_browser_clear_action_state(file_browser_ctx_t *ctx)
     ctx->action_entry.directory[0] = '\0';
 }
 
-/**
- * @brief Handler for action menu buttons (Edit/Rename/Delete/Cancel).
- *
- * Reads the @c file_browser_action_type_t from button user data and performs
- * the corresponding action (open editor, show rename dialog, show delete
- * confirm, or cancel).
- *
- * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_action_button(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1383,13 +1542,6 @@ static void file_browser_on_action_button(lv_event_t *e)
     }
 }
 
-/**
- * @brief Close and clear the delete confirmation message box.
- *
- * If a confirmation message box is present, closes it and nulls the pointer.
- *
- * @param[in,out] ctx Browser context.
- */
 static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx)
 {
     if (ctx && ctx->confirm_mbox) {
@@ -1398,14 +1550,6 @@ static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx)
     }
 }
 
-/**
- * @brief Show a Yes/No confirmation dialog for deleting the selected entry.
- *
- * Creates a message box with the entry name in the prompt and two footer
- * buttons: "Yes" and "No".
- *
- * @param[in,out] ctx Browser context with an active @c action_entry.
- */
 static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx)
 {
     if (!ctx || !ctx->action_entry.active) {
@@ -1433,14 +1577,6 @@ static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx)
     lv_obj_add_event_cb(no_btn, file_browser_on_delete_confirm, LV_EVENT_CLICKED, ctx);
 }
 
-/**
- * @brief Handler for delete confirmation buttons ("Yes"/"No").
- *
- * If confirmed, attempts to delete the selected entry. Otherwise, clears
- * the action state.
- *
- * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_delete_confirm(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1461,15 +1597,6 @@ static void file_browser_on_delete_confirm(lv_event_t *e)
     }
 }
 
-/**
- * @brief Delete the currently selected action entry and reload the browser.
- *
- * Composes the full path, recursively deletes the target (if directory) and
- * reloads the file browser view on success.
- *
- * @param[in,out] ctx Browser context with an active @c action_entry.
- * @return ESP_OK on success or appropriate error code.
- */
 static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx)
 {
     if (!ctx || !ctx->action_entry.active) {
@@ -1492,18 +1619,6 @@ static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx)
     return file_browser_reload();
 }
 
-/**
- * @brief Compose a full filesystem path from @c action_entry.directory and name.
- *
- * Assembles "<directory>/<name>" into the provided output buffer.
- *
- * @param ctx      Browser context with an active @c action_entry.
- * @param[out] out Output buffer for the composed path.
- * @param out_len  Size of @p out buffer in bytes.
- * @return ESP_OK on success,
- *         ESP_ERR_INVALID_STATE if state is invalid,
- *         ESP_ERR_INVALID_SIZE if the buffer is too small.
- */
 static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len)
 {
     if (!ctx || !ctx->action_entry.active || !out || out_len == 0) {
@@ -1519,15 +1634,6 @@ static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx,
     return ESP_OK;
 }
 
-/**
- * @brief Accept handler for the rename dialog (button or keyboard).
- *
- * Validates the new name, checks for no-op, attempts rename via
- * @c file_browser_perform_rename(), displays any errors in the dialog and,
- * on success, closes the dialog and reloads the browser.
- *
- * @param e LVGL event (LV_EVENT_CLICKED or LV_EVENT_READY) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_rename_accept(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1575,13 +1681,6 @@ static void file_browser_on_rename_accept(lv_event_t *e)
     }
 }
 
-/**
- * @brief Cancel handler for the rename dialog.
- *
- * Closes the dialog and clears action state without renaming.
- *
- * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
- */
 static void file_browser_on_rename_cancel(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1612,16 +1711,6 @@ static void file_browser_on_rename_textarea_clicked(lv_event_t *e)
     lv_obj_clear_flag(ctx->rename_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
-/**
- * @brief Perform the actual filesystem rename for the current action entry.
- *
- * Builds the old and new paths and calls @c rename(). If the destination
- * already exists, returns ESP_ERR_INVALID_STATE.
- *
- * @param[in,out] ctx   Browser context with an active @c action_entry.
- * @param new_name      New entry name (validated, non-empty).
- * @return ESP_OK on success or an appropriate ESP_ERR_* code on failure.
- */
 static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name)
 {
     if (!ctx || !ctx->action_entry.active || !new_name || new_name[0] == '\0') {
@@ -1651,21 +1740,6 @@ static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char
     return ESP_OK;
 }
 
-/**
- * @brief Recursively delete a path, which may be a file or directory tree.
- *
- * Uses @c stat() to determine whether the path is a directory. If so, iterates
- * over entries with @c opendir()/readdir(), recursively deletes children and
- * finally removes the directory. If it is a file, calls @c remove().
- *
- * Missing paths (ENOENT) are treated as success.
- *
- * @param path Path to delete (must be non-empty string).
- * @return ESP_OK on success,
- *         ESP_ERR_INVALID_ARG for invalid input,
- *         ESP_ERR_INVALID_SIZE if child path buffer would overflow,
- *         ESP_FAIL on other filesystem/errno-based errors.
- */
 static esp_err_t file_browser_delete_path(const char *path)
 {
     if (!path || path[0] == '\0') {
