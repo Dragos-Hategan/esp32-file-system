@@ -9,7 +9,7 @@ extern "C" {
 
 #include "esp_err.h"
 
-#define FS_TEXT_MAX_BYTES   (16 * 1024)
+#define FS_TEXT_MAX_BYTES   (32 * 1024)
 #define FS_TEXT_MAX_PATH    512
 
 /**
@@ -19,6 +19,24 @@ extern "C" {
  * @return true if the string ends with ".txt", false otherwise.
  */
 bool fs_text_is_txt(const char *name);
+
+/**
+ * @brief Create a new empty file.
+ *
+ * Attempts to create a new file at @p path. If the file already exists,
+ * returns ESP_ERR_INVALID_STATE. The file is opened in binary write mode
+ * and immediately closed to ensure it exists and is empty.
+ *
+ * @param path Absolute or relative path to the file to create.
+ *
+ * @retval ESP_OK               File created successfully.
+ * @retval ESP_ERR_INVALID_ARG  Invalid or unsafe path.
+ * @retval ESP_ERR_INVALID_STATE File already exists.
+ * @retval ESP_FAIL             Creation failed (e.g. permission or I/O error).
+ *
+ * @note The created file will have zero length.
+ */
+esp_err_t fs_text_create(const char *path);
 
 /**
  * @brief Read a text file into a newly-allocated buffer.
@@ -84,24 +102,6 @@ esp_err_t fs_text_append(const char *path, const char *data, size_t len);
  * @warning Fails silently if the path points to a directory instead of a file.
  */
 esp_err_t fs_text_delete(const char *path);
-
-/**
- * @brief Create a new empty file.
- *
- * Attempts to create a new file at @p path. If the file already exists,
- * returns ESP_ERR_INVALID_STATE. The file is opened in binary write mode
- * and immediately closed to ensure it exists and is empty.
- *
- * @param path Absolute or relative path to the file to create.
- *
- * @retval ESP_OK               File created successfully.
- * @retval ESP_ERR_INVALID_ARG  Invalid or unsafe path.
- * @retval ESP_ERR_INVALID_STATE File already exists.
- * @retval ESP_FAIL             Creation failed (e.g. permission or I/O error).
- *
- * @note The created file will have zero length.
- */
-esp_err_t fs_text_create(const char *path);
 
 #ifdef __cplusplus
 }

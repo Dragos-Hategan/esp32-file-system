@@ -63,6 +63,26 @@ bool fs_text_is_txt(const char *name)
     return dot && strcasecmp(dot, ".txt") == 0;
 }
 
+esp_err_t fs_text_create(const char *path)
+{
+    if (!fs_text_check_path(path)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    struct stat st = {0};
+    if (stat(path, &st) == 0) {
+        return ESP_ERR_INVALID_STATE; // Already exists
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "create fopen(%s) failed (errno=%d)", path, errno);
+        return ESP_FAIL;
+    }
+    fclose(f);
+    return ESP_OK;
+}
+
 esp_err_t fs_text_read(const char *path, char **out_buf, size_t *out_len)
 {
     if (!out_buf || !fs_text_check_path(path)) {
@@ -156,26 +176,6 @@ esp_err_t fs_text_delete(const char *path)
         ESP_LOGE(TAG, "remove(%s) failed (errno=%d)", path, errno);
         return ESP_FAIL;
     }
-    return ESP_OK;
-}
-
-esp_err_t fs_text_create(const char *path)
-{
-    if (!fs_text_check_path(path)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    struct stat st = {0};
-    if (stat(path, &st) == 0) {
-        return ESP_ERR_INVALID_STATE; // Already exists
-    }
-
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        ESP_LOGE(TAG, "create fopen(%s) failed (errno=%d)", path, errno);
-        return ESP_FAIL;
-    }
-    fclose(f);
     return ESP_OK;
 }
 

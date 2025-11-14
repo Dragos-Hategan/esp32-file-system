@@ -1,4 +1,4 @@
-menu "Touch controller XPT2046"
+menu "Touch Controller XPT2046 Configuration"
     
     config TOUCH_SPI_HOST
         int "Touch SPI host (spi_host_device_t)"

@@ -36,9 +36,11 @@ static bool s_cmp_ascending = true;
 
 static bool fs_nav_is_valid_relative(const char *relative);
 static void fs_nav_update_current_path(fs_nav_t *nav);
+
 static esp_err_t fs_nav_set_relative(fs_nav_t *nav, const char *relative);
 static esp_err_t fs_nav_store_state(const fs_nav_t *nav);
 static esp_err_t fs_nav_load_state(fs_nav_t *nav);
+
 static void fs_nav_sort_entries(fs_nav_t *nav);
 static int fs_nav_entry_compare(const void *lhs, const void *rhs);
 

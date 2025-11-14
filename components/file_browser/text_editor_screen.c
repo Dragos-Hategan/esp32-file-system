@@ -44,6 +44,8 @@ typedef struct {
 
 static text_editor_ctx_t s_editor;
 
+/************************************** UI Setup & Status *************************************/
+
 /**
  * @brief Build and initialize all LVGL UI elements for the text editor.
  *
@@ -95,6 +97,11 @@ static void text_editor_set_status(text_editor_ctx_t *ctx, const char *msg, bool
  * @note If @c ctx->suppress_events is true, this call is ignored.
  */
 static void text_editor_mark_dirty(text_editor_ctx_t *ctx);
+
+/*********************************************************************************************/
+
+
+/************************************ File Operations & Dialogs ************************************/
 
 /**
  * @brief Close the editor and return to the previous screen.
@@ -157,6 +164,11 @@ static esp_err_t text_editor_save_internal(text_editor_ctx_t *ctx);
  */
 static esp_err_t text_editor_delete_internal(text_editor_ctx_t *ctx);
 
+/*********************************************************************************************/
+
+
+/******************************** Keyboard Visibility Helper ********************************/
+
 /**
  * @brief Toggle on-screen keyboard visibility based on focus state.
  *
@@ -168,6 +180,11 @@ static esp_err_t text_editor_delete_internal(text_editor_ctx_t *ctx);
  * @note Safe to call repeatedly; does nothing if widgets are missing.
  */
 static void text_editor_update_keyboard_visibility(text_editor_ctx_t *ctx);
+
+/*********************************************************************************************/
+
+
+/************************************** Filename Utilities *************************************/
 
 /**
  * @brief Ensure a name ends with the “.txt” extension.
@@ -181,6 +198,11 @@ static void text_editor_update_keyboard_visibility(text_editor_ctx_t *ctx);
  * @note No-op if the buffer is NULL/empty or too small for the suffix.
  */
 static void text_editor_ensure_txt_extension(char *name, size_t len);
+
+/*********************************************************************************************/
+
+
+/******************************** Toolbar & Dialog Handlers ********************************/
 
 /**
  * @brief Handle the Back button click.
@@ -222,6 +244,11 @@ static void text_editor_on_delete(lv_event_t *e);
  */
 static void text_editor_on_dialog_button(lv_event_t *e);
 
+/*********************************************************************************************/
+
+
+/************************************ Input Event Handlers ************************************/
+
 /**
  * @brief Value-changed handler for filename/body inputs.
  *
@@ -249,6 +276,8 @@ static void text_editor_on_focused(lv_event_t *e);
  */
 static void text_editor_on_defocused(lv_event_t *e);
 
+/*********************************************************************************************/
+
 /**
  * @brief Get the base filename from the editor’s current path.
  *
@@ -259,11 +288,7 @@ static void text_editor_on_defocused(lv_event_t *e);
  * @note Returned pointer is owned by @c ctx and remains valid while @c path
  *       is unchanged.
  */
-static const char *text_editor_filename(const text_editor_ctx_t *ctx)
-{
-    const char *slash = strrchr(ctx->path, '/');
-    return (slash && slash[1]) ? slash + 1 : ctx->path;
-}
+static const char *text_editor_filename(const text_editor_ctx_t *ctx);
 
 /**
  * @brief Extract the directory portion of a path into a destination buffer.
@@ -277,23 +302,7 @@ static const char *text_editor_filename(const text_editor_ctx_t *ctx)
  *
  * @note If the directory length would exceed @p dst_len - 1, it is truncated.
  */
-static void text_editor_copy_directory(char *dst, size_t dst_len, const char *path)
-{
-    if (!path || dst_len == 0) {
-        return;
-    }
-    const char *slash = strrchr(path, '/');
-    size_t len = slash ? (size_t)(slash - path) : 0;
-    if (len >= dst_len) {
-        len = dst_len - 1;
-    }
-    if (len > 0) {
-        memcpy(dst, path, len);
-        dst[len] = '\0';
-    } else {
-        strlcpy(dst, "/", dst_len);
-    }
-}
+static void text_editor_copy_directory(char *dst, size_t dst_len, const char *path);
 
 esp_err_t text_editor_open(const text_editor_open_opts_t *opts)
 {
@@ -728,5 +737,29 @@ static void text_editor_update_keyboard_visibility(text_editor_ctx_t *ctx)
     } else {
         lv_keyboard_set_textarea(ctx->keyboard, NULL);
         lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static const char *text_editor_filename(const text_editor_ctx_t *ctx)
+{
+    const char *slash = strrchr(ctx->path, '/');
+    return (slash && slash[1]) ? slash + 1 : ctx->path;
+}
+
+static void text_editor_copy_directory(char *dst, size_t dst_len, const char *path)
+{
+    if (!path || dst_len == 0) {
+        return;
+    }
+    const char *slash = strrchr(path, '/');
+    size_t len = slash ? (size_t)(slash - path) : 0;
+    if (len >= dst_len) {
+        len = dst_len - 1;
+    }
+    if (len > 0) {
+        memcpy(dst, path, len);
+        dst[len] = '\0';
+    } else {
+        strlcpy(dst, "/", dst_len);
     }
 }

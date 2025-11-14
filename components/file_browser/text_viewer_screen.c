@@ -41,24 +41,46 @@ static const char *TAG = "text_viewer";
 
 static text_viewer_ctx_t s_viewer;
 
+/************************************** UI Setup & State *************************************/
+
 static void text_viewer_build_screen(text_viewer_ctx_t *ctx);
 static void text_viewer_apply_mode(text_viewer_ctx_t *ctx);
 static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg);
 static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text);
 static void text_viewer_update_buttons(text_viewer_ctx_t *ctx);
-static void text_viewer_on_text_area_clicked(lv_event_t *e);
-static void text_viewer_on_screen_clicked(lv_event_t *e);
-static void text_viewer_on_keyboard_cancel(lv_event_t *e);
+
+/*********************************************************************************************/
+
+
+/******************************* Keyboard & interaction helpers ******************************/
+
 static void text_viewer_show_keyboard(text_viewer_ctx_t *ctx);
 static void text_viewer_hide_keyboard(text_viewer_ctx_t *ctx);
-static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed);
-static void text_viewer_on_back(lv_event_t *e);
+static void text_viewer_on_text_area_clicked(lv_event_t *e);
+static void text_viewer_on_keyboard_cancel(lv_event_t *e);
+static void text_viewer_on_screen_clicked(lv_event_t *e);
+
+/*********************************************************************************************/
+
+
+/************************************** Editing workflow *************************************/
+
+static void text_viewer_on_text_changed(lv_event_t *e);
 static void text_viewer_handle_save(text_viewer_ctx_t *ctx);
 static void text_viewer_on_save(lv_event_t *e);
-static void text_viewer_on_text_changed(lv_event_t *e);
+static void text_viewer_on_back(lv_event_t *e);
+
+/*********************************************************************************************/
+
+
+/************************************ Confirmation dialog ************************************/
+
 static void text_viewer_show_confirm(text_viewer_ctx_t *ctx);
 static void text_viewer_close_confirm(text_viewer_ctx_t *ctx);
 static void text_viewer_on_confirm(lv_event_t *e);
+static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed);
+
+/*********************************************************************************************/
 
 esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
 {

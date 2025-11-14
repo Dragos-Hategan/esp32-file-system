@@ -64,63 +64,90 @@ typedef struct {
     bool suppress_click;
 } file_browser_ctx_t;
 
-static file_browser_ctx_t s_browser;
+ static file_browser_ctx_t s_browser;
 
-static void file_browser_build_screen(file_browser_ctx_t *ctx);
-static void file_browser_sync_view(file_browser_ctx_t *ctx);
-static void file_browser_update_path_label(file_browser_ctx_t *ctx);
-static void file_browser_update_sort_badges(file_browser_ctx_t *ctx);
-static void file_browser_populate_list(file_browser_ctx_t *ctx);
-static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode);
-static void file_browser_show_error_screen(const char *root_path, esp_err_t err);
-static void file_browser_format_size(size_t bytes, char *out, size_t out_len);
+/************************************ UI & Data Refresh Helpers ***********************************/
 
-/**
- * @brief Refresh the current directory view and redraw the list.
- *
- * Re-reads directory entries via @c fs_nav_refresh and repopulates the LVGL list.
- *
- * @return
- * - ESP_OK on success
- * - ESP_ERR_INVALID_STATE if the browser was not started
- * - Error from @c fs_nav_refresh
- * - ESP_ERR_TIMEOUT if display lock cannot be acquired
- */
-static esp_err_t file_browser_reload(void);
+ static void file_browser_build_screen(file_browser_ctx_t *ctx);
+ static void file_browser_sync_view(file_browser_ctx_t *ctx);
+ static void file_browser_update_path_label(file_browser_ctx_t *ctx);
+ static void file_browser_update_sort_badges(file_browser_ctx_t *ctx);
+ static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode);
+ static void file_browser_populate_list(file_browser_ctx_t *ctx);
+ static void file_browser_format_size(size_t bytes, char *out, size_t out_len);
+ static void file_browser_show_error_screen(const char *root_path, esp_err_t err);
+ static esp_err_t file_browser_reload(void);
 
-static void file_browser_on_entry_click(lv_event_t *e);
-static void file_browser_on_entry_long_press(lv_event_t *e);
-static void file_browser_on_parent_click(lv_event_t *e);
-static void file_browser_on_sort_mode_click(lv_event_t *e);
-static void file_browser_on_sort_dir_click(lv_event_t *e);
-static void file_browser_on_new_txt_click(lv_event_t *e);
-static void file_browser_on_new_folder_click(lv_event_t *e);
-static void file_browser_editor_closed(bool changed, void *user_ctx);
-static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx);
-static void file_browser_close_folder_dialog(file_browser_ctx_t *ctx);
-static void file_browser_on_folder_create(lv_event_t *e);
-static void file_browser_on_folder_cancel(lv_event_t *e);
-static void file_browser_set_folder_status(file_browser_ctx_t *ctx, const char *msg, bool error);
-static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char *name);
-static bool file_browser_is_valid_name(const char *name);
-static void file_browser_trim_whitespace(char *name);
-static esp_err_t file_browser_delete_path(const char *path);
-static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry);
-static void file_browser_show_action_menu(file_browser_ctx_t *ctx);
-static void file_browser_close_action_menu(file_browser_ctx_t *ctx);
-static void file_browser_on_action_button(lv_event_t *e);
-static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx);
-static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx);
-static void file_browser_on_delete_confirm(lv_event_t *e);
-static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx);
-static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len);
-static void file_browser_clear_action_state(file_browser_ctx_t *ctx);
-static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *msg, bool error);
-static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx);
-static void file_browser_close_rename_dialog(file_browser_ctx_t *ctx);
-static void file_browser_on_rename_accept(lv_event_t *e);
-static void file_browser_on_rename_cancel(lv_event_t *e);
-static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name);
+/**************************************************************************************************/
+
+
+/***************************** List Interactions & Text Editor Bridge *****************************/
+
+ static void file_browser_on_entry_click(lv_event_t *e);
+ static void file_browser_on_entry_long_press(lv_event_t *e);
+ static void file_browser_on_parent_click(lv_event_t *e);
+ static void file_browser_on_sort_mode_click(lv_event_t *e);
+ static void file_browser_on_sort_dir_click(lv_event_t *e);
+ static void file_browser_on_new_txt_click(lv_event_t *e);
+ static void file_browser_editor_closed(bool changed, void *user_ctx);
+
+/**************************************************************************************************/
+
+
+/************************************* Folder Creation Dialog *************************************/
+
+ static void file_browser_on_new_folder_click(lv_event_t *e);
+ static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx);
+ static void file_browser_close_folder_dialog(file_browser_ctx_t *ctx);
+ static void file_browser_on_folder_create(lv_event_t *e);
+ static void file_browser_on_folder_cancel(lv_event_t *e);
+ static void file_browser_set_folder_status(file_browser_ctx_t *ctx, const char *msg, bool error);
+ static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char *name);
+
+/**************************************************************************************************/
+
+
+/*********************************** Filesystem Utility Helpers ***********************************/
+
+ static bool file_browser_is_valid_name(const char *name);
+ static void file_browser_trim_whitespace(char *name);
+ static esp_err_t file_browser_delete_path(const char *path);
+
+/**************************************************************************************************/
+
+
+/************************************** Action Menu Workflow **************************************/
+
+ static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry);
+ static void file_browser_show_action_menu(file_browser_ctx_t *ctx);
+ static void file_browser_close_action_menu(file_browser_ctx_t *ctx);
+ static void file_browser_on_action_button(lv_event_t *e);
+ static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx);
+ static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx);
+ static void file_browser_on_delete_confirm(lv_event_t *e);
+ static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx);
+
+/**************************************************************************************************/
+
+
+/************************************* Action State Utilities *************************************/
+
+ static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len);
+ static void file_browser_clear_action_state(file_browser_ctx_t *ctx);
+
+/**************************************************************************************************/
+
+
+/************************************* Rename Dialog Workflow *************************************/
+
+ static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *msg, bool error);
+ static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx);
+ static void file_browser_close_rename_dialog(file_browser_ctx_t *ctx);
+ static void file_browser_on_rename_accept(lv_event_t *e);
+ static void file_browser_on_rename_cancel(lv_event_t *e);
+ static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name);
+
+/**************************************************************************************************/
 
 static sdmmc_card_t *s_sd_card = NULL;
 static bool s_spi_bus_ready = false;
@@ -216,6 +243,17 @@ esp_err_t file_browser_start(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Refresh the current directory view and redraw the list.
+ *
+ * Re-reads directory entries via @c fs_nav_refresh and repopulates the LVGL list.
+ *
+ * @return
+ * - ESP_OK on success
+ * - ESP_ERR_INVALID_STATE if the browser was not started
+ * - Error from @c fs_nav_refresh
+ * - ESP_ERR_TIMEOUT if display lock cannot be acquired
+ */
 static esp_err_t file_browser_reload(void)
 {
     file_browser_ctx_t *ctx = &s_browser;
@@ -1001,7 +1039,7 @@ static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char 
 /**
  * @brief Check if a given name is a valid filesystem entry name.
  *
- * Rejects empty strings and names containing '/', '\\', ':' or '*'.
+ * Rejects empty strings and names containing '\', '/', ':', '*', '?', '"', '<', '>' or '|'.
  *
  * @param name Candidate name string.
  * @return true if the name is valid, false otherwise.
@@ -1012,7 +1050,12 @@ static bool file_browser_is_valid_name(const char *name)
         return false;
     }
     for (const char *p = name; *p; ++p) {
-        if (*p == '/' || *p == '\\' || *p == ':' || *p == '*') {
+        if (
+                *p == '\\' || *p == '/' || *p == ':' ||
+                *p == '*'  || *p == '?' || *p == '"' ||
+                *p == '<'  || *p == '>' || *p == '|'
+            ) 
+        {
             return false;
         }
     }
@@ -1212,9 +1255,10 @@ static void file_browser_on_action_button(lv_event_t *e)
     }
     file_browser_action_type_t action = (file_browser_action_type_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
 
+    file_browser_close_action_menu(ctx);
+
     switch (action) {
         case FILE_BROWSER_ACTION_EDIT: {
-            file_browser_close_action_menu(ctx);
             if (!ctx->action_entry.active || ctx->action_entry.is_dir || !ctx->action_entry.is_txt) {
                 return;
             }
@@ -1239,16 +1283,13 @@ static void file_browser_on_action_button(lv_event_t *e)
             break;
         }
         case FILE_BROWSER_ACTION_RENAME:
-            file_browser_close_action_menu(ctx);
             file_browser_show_rename_dialog(ctx);
             break;
         case FILE_BROWSER_ACTION_DELETE:
-            file_browser_close_action_menu(ctx);
             file_browser_show_delete_confirm(ctx);
             break;
         case FILE_BROWSER_ACTION_CANCEL:
         default:
-            file_browser_close_action_menu(ctx);
             file_browser_clear_action_state(ctx);
             break;
     }
