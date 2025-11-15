@@ -662,27 +662,6 @@ esp_err_t file_browser_start(void)
     return ESP_OK;
 }
 
-static esp_err_t file_browser_reload(void)
-{
-    file_browser_ctx_t *ctx = &s_browser;
-    if (!ctx->initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    esp_err_t err = fs_nav_refresh(&ctx->nav);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    if (!bsp_display_lock(0)) {
-        return ESP_ERR_TIMEOUT;
-    }
-    file_browser_sync_view(ctx);
-    file_browser_clear_action_state(ctx);
-    bsp_display_unlock();
-    return ESP_OK;
-}
-
 static void file_browser_build_screen(file_browser_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -767,6 +746,19 @@ static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)
     lv_label_set_text(ctx->sort_dir_label, fs_nav_is_sort_ascending(&ctx->nav) ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
 }
 
+static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode)
+{
+    switch (mode) {
+        case FS_NAV_SORT_DATE:
+            return "Date";
+        case FS_NAV_SORT_SIZE:
+            return "Size";
+        case FS_NAV_SORT_NAME:
+        default:
+            return "Name";
+    }
+}
+
 static void file_browser_populate_list(file_browser_ctx_t *ctx)
 {
     lv_obj_clean(ctx->list);
@@ -807,19 +799,6 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
     }
 }
 
-static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode)
-{
-    switch (mode) {
-        case FS_NAV_SORT_DATE:
-            return "Date";
-        case FS_NAV_SORT_SIZE:
-            return "Size";
-        case FS_NAV_SORT_NAME:
-        default:
-            return "Name";
-    }
-}
-
 static void file_browser_format_size(size_t bytes, char *out, size_t out_len)
 {
     static const char *suffixes[] = {"B", "KB", "MB", "GB"};
@@ -834,6 +813,53 @@ static void file_browser_format_size(size_t bytes, char *out, size_t out_len)
     } else {
         snprintf(out, out_len, "%.1f %s", value, suffixes[idx]);
     }
+}
+
+static void file_browser_show_error_screen(const char *root_path, esp_err_t err)
+{
+    if (!bsp_display_lock(0)) {
+        return;
+    }
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+    //lv_obj_set_style_bg_color(scr, lv_color_hex(0x120a0a), 0);
+    lv_obj_center(scr);
+
+    lv_obj_t *label = lv_label_create(scr);
+    lv_label_set_text_fmt(label,
+                          "Storage not ready\nPath: %s\n(%s)",
+                          root_path,
+                          esp_err_to_name(err));
+
+    lv_obj_center(label);
+
+    lv_obj_t *label2 = lv_label_create(scr);
+    lv_label_set_text_fmt(label2, "TO DO: FALLBACK");
+    lv_obj_align_to(label2, label, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+
+    lv_screen_load(scr);
+    bsp_display_unlock();
+}
+
+static esp_err_t file_browser_reload(void)
+{
+    file_browser_ctx_t *ctx = &s_browser;
+    if (!ctx->initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err = fs_nav_refresh(&ctx->nav);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (!bsp_display_lock(0)) {
+        return ESP_ERR_TIMEOUT;
+    }
+    file_browser_sync_view(ctx);
+    file_browser_clear_action_state(ctx);
+    bsp_display_unlock();
+    return ESP_OK;
 }
 
 static void file_browser_on_entry_click(lv_event_t *e)
@@ -927,19 +953,6 @@ static void file_browser_on_parent_click(lv_event_t *e)
     }
 }
 
-static void file_browser_editor_closed(bool changed, void *user_ctx)
-{
-    file_browser_ctx_t *ctx = (file_browser_ctx_t *)user_ctx;
-    if (!ctx || !changed) {
-        return;
-    }
-
-    esp_err_t err = file_browser_reload();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to reload after editor: %s", esp_err_to_name(err));
-    }
-}
-
 static void file_browser_on_sort_mode_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -996,6 +1009,19 @@ static void file_browser_on_new_txt_click(lv_event_t *e)
     }
 }
 
+static void file_browser_editor_closed(bool changed, void *user_ctx)
+{
+    file_browser_ctx_t *ctx = (file_browser_ctx_t *)user_ctx;
+    if (!ctx || !changed) {
+        return;
+    }
+
+    esp_err_t err = file_browser_reload();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to reload after editor: %s", esp_err_to_name(err));
+    }
+}
+
 static void file_browser_on_new_folder_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1003,32 +1029,6 @@ static void file_browser_on_new_folder_click(lv_event_t *e)
         return;
     }
     file_browser_show_folder_dialog(ctx);
-}
-
-static void file_browser_show_error_screen(const char *root_path, esp_err_t err)
-{
-    if (!bsp_display_lock(0)) {
-        return;
-    }
-
-    lv_obj_t *scr = lv_obj_create(NULL);
-    //lv_obj_set_style_bg_color(scr, lv_color_hex(0x120a0a), 0);
-    lv_obj_center(scr);
-
-    lv_obj_t *label = lv_label_create(scr);
-    lv_label_set_text_fmt(label,
-                          "Storage not ready\nPath: %s\n(%s)",
-                          root_path,
-                          esp_err_to_name(err));
-
-    lv_obj_center(label);
-
-    lv_obj_t *label2 = lv_label_create(scr);
-    lv_label_set_text_fmt(label2, "TO DO: FALLBACK");
-    lv_obj_align_to(label2, label, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
-
-    lv_screen_load(scr);
-    bsp_display_unlock();
 }
 
 static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx)
@@ -1119,49 +1119,6 @@ static void file_browser_close_folder_dialog(file_browser_ctx_t *ctx)
     ctx->folder_keyboard = NULL;
 }
 
-static void file_browser_set_folder_status(file_browser_ctx_t *ctx, const char *msg, bool error)
-{
-    if (!ctx || !ctx->folder_dialog || !msg) {
-        return;
-    }
-    lv_obj_t *dlg = lv_obj_get_child(ctx->folder_dialog, 0);
-    if (!dlg) {
-        return;
-    }
-    lv_obj_t *content = lv_msgbox_get_content(dlg);
-    if (!content) {
-        return;
-    }
-    lv_obj_t *title = lv_obj_get_child(content, 0);
-    if (!title) {
-        return;
-    }
-    lv_obj_set_style_text_color(title,
-                                error ? lv_color_hex(0xff6b6b) : lv_color_hex(0xcfd8dc),
-                                0);
-    lv_label_set_text(title, msg);
-}
-
-static void file_browser_on_folder_keyboard_cancel(lv_event_t *e)
-{
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->folder_keyboard) {
-        return;
-    }
-    lv_keyboard_set_textarea(ctx->folder_keyboard, NULL);
-    lv_obj_add_flag(ctx->folder_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void file_browser_on_folder_textarea_clicked(lv_event_t *e)
-{
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->folder_keyboard || !ctx->folder_textarea) {
-        return;
-    }
-    lv_keyboard_set_textarea(ctx->folder_keyboard, ctx->folder_textarea);
-    lv_obj_clear_flag(ctx->folder_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
 static void file_browser_on_folder_create(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1209,6 +1166,415 @@ static void file_browser_on_folder_cancel(lv_event_t *e)
         return;
     }
     file_browser_close_folder_dialog(ctx);
+}
+
+static void file_browser_set_folder_status(file_browser_ctx_t *ctx, const char *msg, bool error)
+{
+    if (!ctx || !ctx->folder_dialog || !msg) {
+        return;
+    }
+    lv_obj_t *dlg = lv_obj_get_child(ctx->folder_dialog, 0);
+    if (!dlg) {
+        return;
+    }
+    lv_obj_t *content = lv_msgbox_get_content(dlg);
+    if (!content) {
+        return;
+    }
+    lv_obj_t *title = lv_obj_get_child(content, 0);
+    if (!title) {
+        return;
+    }
+    lv_obj_set_style_text_color(title,
+                                error ? lv_color_hex(0xff6b6b) : lv_color_hex(0xcfd8dc),
+                                0);
+    lv_label_set_text(title, msg);
+}
+
+static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char *name)
+{
+    char path[FS_NAV_MAX_PATH];
+    esp_err_t err = fs_nav_compose_path(&ctx->nav, name, path, sizeof(path));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (mkdir(path, 0775) != 0) {
+        if (errno == EEXIST) {
+            return ESP_ERR_INVALID_STATE;
+        }
+        ESP_LOGE(TAG, "mkdir(%s) failed (errno=%d)", path, errno);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static void file_browser_on_folder_keyboard_cancel(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->folder_keyboard) {
+        return;
+    }
+    lv_keyboard_set_textarea(ctx->folder_keyboard, NULL);
+    lv_obj_add_flag(ctx->folder_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void file_browser_on_folder_textarea_clicked(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->folder_keyboard || !ctx->folder_textarea) {
+        return;
+    }
+    lv_keyboard_set_textarea(ctx->folder_keyboard, ctx->folder_textarea);
+    lv_obj_clear_flag(ctx->folder_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+static bool file_browser_is_valid_name(const char *name)
+{
+    if (!name || name[0] == '\0') {
+        return false;
+    }
+    for (const char *p = name; *p; ++p) {
+        if (
+                *p == '\\' || *p == '/' || *p == ':' ||
+                *p == '*'  || *p == '?' || *p == '"' ||
+                *p == '<'  || *p == '>' || *p == '|'
+            ) 
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void file_browser_trim_whitespace(char *name)
+{
+    if (!name) {
+        return;
+    }
+    char *start = name;
+    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') {
+        start++;
+    }
+    char *end = start + strlen(start);
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r')) {
+        *--end = '\0';
+    }
+    if (start != name) {
+        memmove(name, start, (size_t)(end - start) + 1);
+    }
+}
+
+static esp_err_t file_browser_delete_path(const char *path)
+{
+    if (!path || path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    struct stat st = {0};
+    if (stat(path, &st) != 0) {
+        if (errno == ENOENT) {
+            return ESP_OK;
+        }
+        ESP_LOGE(TAG, "stat(%s) failed (errno=%d)", path, errno);
+        return ESP_FAIL;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        DIR *dir = opendir(path);
+        if (!dir) {
+            ESP_LOGE(TAG, "opendir(%s) failed (errno=%d)", path, errno);
+            return ESP_FAIL;
+        }
+        struct dirent *dent = NULL;
+        while ((dent = readdir(dir)) != NULL) {
+            if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) {
+                continue;
+            }
+            char child[FS_NAV_MAX_PATH];
+            int needed = snprintf(child, sizeof(child), "%s/%s", path, dent->d_name);
+            if (needed < 0 || needed >= (int)sizeof(child)) {
+                closedir(dir);
+                return ESP_ERR_INVALID_SIZE;
+            }
+            esp_err_t err = file_browser_delete_path(child);
+            if (err != ESP_OK) {
+                closedir(dir);
+                return err;
+            }
+        }
+        closedir(dir);
+        if (rmdir(path) != 0) {
+            ESP_LOGE(TAG, "rmdir(%s) failed (errno=%d)", path, errno);
+            return ESP_FAIL;
+        }
+        return ESP_OK;
+    }
+
+    if (remove(path) != 0) {
+        ESP_LOGE(TAG, "remove(%s) failed (errno=%d)", path, errno);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
+{
+    if (!ctx || !entry) {
+        return;
+    }
+    ctx->action_entry.active = true;
+    ctx->action_entry.is_dir = entry->is_dir;
+    ctx->action_entry.is_txt = !entry->is_dir && fs_text_is_txt(entry->name);
+    strlcpy(ctx->action_entry.name, entry->name, sizeof(ctx->action_entry.name));
+    const char *dir = fs_nav_current_path(&ctx->nav);
+    if (!dir) {
+        dir = "";
+    }
+    strlcpy(ctx->action_entry.directory, dir, sizeof(ctx->action_entry.directory));
+}
+
+static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->action_entry.active) {
+        return;
+    }
+    file_browser_close_action_menu(ctx);
+
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    ctx->action_mbox = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text(label, ctx->action_entry.name);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *footer = lv_obj_create(mbox);
+    lv_obj_remove_style_all(footer);
+    lv_obj_set_size(footer, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(footer, 8, 0);
+
+    lv_obj_t *row1 = lv_obj_create(footer);
+    lv_obj_remove_style_all(row1);
+    lv_obj_set_size(row1, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row1, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row1, 8, 0);
+
+    lv_obj_t *rename_btn = lv_button_create(row1);
+    lv_obj_set_flex_grow(rename_btn, 1);
+    lv_obj_t *rename_lbl = lv_label_create(rename_btn);
+    lv_label_set_text(rename_lbl, "Rename");
+    lv_obj_center(rename_lbl);
+    lv_obj_set_user_data(rename_btn, (void *)FILE_BROWSER_ACTION_RENAME);
+    lv_obj_add_event_cb(rename_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *del_btn = lv_button_create(row1);
+    lv_obj_set_flex_grow(del_btn, 1);
+    lv_obj_t *del_lbl = lv_label_create(del_btn);
+    lv_label_set_text(del_lbl, "Delete");
+    lv_obj_center(del_lbl);
+    lv_obj_set_user_data(del_btn, (void *)FILE_BROWSER_ACTION_DELETE);
+    lv_obj_add_event_cb(del_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+
+    bool has_edit = (!ctx->action_entry.is_dir && ctx->action_entry.is_txt);
+    if (has_edit) {
+        lv_obj_t *row2 = lv_obj_create(footer);
+        lv_obj_remove_style_all(row2);
+        lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_gap(row2, 8, 0);
+
+        lv_obj_t *edit_btn = lv_button_create(row2);
+        lv_obj_set_flex_grow(edit_btn, 1);
+        lv_obj_t *edit_lbl = lv_label_create(edit_btn);
+        lv_label_set_text(edit_lbl, "Edit");
+        lv_obj_center(edit_lbl);
+        lv_obj_set_user_data(edit_btn, (void *)FILE_BROWSER_ACTION_EDIT);
+        lv_obj_add_event_cb(edit_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+
+        lv_obj_t *cancel_btn = lv_button_create(row2);
+        lv_obj_set_flex_grow(cancel_btn, 1);
+        lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+        lv_label_set_text(cancel_lbl, "Cancel");
+        lv_obj_center(cancel_lbl);
+        lv_obj_set_user_data(cancel_btn, (void *)FILE_BROWSER_ACTION_CANCEL);
+        lv_obj_add_event_cb(cancel_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+    } else {
+        lv_obj_t *cancel_btn = lv_button_create(row1);
+        lv_obj_set_flex_grow(cancel_btn, 1);
+        lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+        lv_label_set_text(cancel_lbl, "Cancel");
+        lv_obj_center(cancel_lbl);
+        lv_obj_set_user_data(cancel_btn, (void *)FILE_BROWSER_ACTION_CANCEL);
+        lv_obj_add_event_cb(cancel_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+    }
+}
+
+static void file_browser_close_action_menu(file_browser_ctx_t *ctx)
+{
+    if (ctx && ctx->action_mbox) {
+        lv_msgbox_close(ctx->action_mbox);
+        ctx->action_mbox = NULL;
+    }
+}
+
+static void file_browser_on_action_button(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    file_browser_action_type_t action = (file_browser_action_type_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
+
+    file_browser_close_action_menu(ctx);
+
+    switch (action) {
+        case FILE_BROWSER_ACTION_EDIT: {
+            if (!ctx->action_entry.active || ctx->action_entry.is_dir || !ctx->action_entry.is_txt) {
+                return;
+            }
+            char path[FS_NAV_MAX_PATH];
+            if (file_browser_action_compose_path(ctx, path, sizeof(path)) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to compose path for edit");
+                return;
+            }
+            text_viewer_open_opts_t opts = {
+                .path = path,
+                .return_screen = ctx->screen,
+                .editable = true,
+                .on_close = file_browser_editor_closed,
+                .user_ctx = ctx,
+            };
+            esp_err_t err = text_viewer_open(&opts);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to edit \"%s\": %s", ctx->action_entry.name, esp_err_to_name(err));
+            } else {
+                file_browser_clear_action_state(ctx);
+            }
+            break;
+        }
+        case FILE_BROWSER_ACTION_RENAME:
+            file_browser_show_rename_dialog(ctx);
+            break;
+        case FILE_BROWSER_ACTION_DELETE:
+            file_browser_show_delete_confirm(ctx);
+            break;
+        case FILE_BROWSER_ACTION_CANCEL:
+        default:
+            file_browser_clear_action_state(ctx);
+            break;
+    }
+}
+
+static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->action_entry.active) {
+        return;
+    }
+    file_browser_close_delete_confirm(ctx);
+
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    ctx->confirm_mbox = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text_fmt(label, "Delete \"%s\"?", ctx->action_entry.name);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *yes_btn = lv_msgbox_add_footer_button(mbox, "Yes");
+    lv_obj_set_user_data(yes_btn, (void *)1);
+    lv_obj_add_event_cb(yes_btn, file_browser_on_delete_confirm, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *no_btn = lv_msgbox_add_footer_button(mbox, "No");
+    lv_obj_set_user_data(no_btn, (void *)0);
+    lv_obj_add_event_cb(no_btn, file_browser_on_delete_confirm, LV_EVENT_CLICKED, ctx);
+}
+
+static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx)
+{
+    if (ctx && ctx->confirm_mbox) {
+        lv_msgbox_close(ctx->confirm_mbox);
+        ctx->confirm_mbox = NULL;
+    }
+}
+
+static void file_browser_on_delete_confirm(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    bool confirm = (bool)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
+    file_browser_close_delete_confirm(ctx);
+
+    if (!confirm) {
+        file_browser_clear_action_state(ctx);
+        return;
+    }
+
+    esp_err_t err = file_browser_delete_selected_entry(ctx);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Delete failed: %s", esp_err_to_name(err));
+    }
+}
+
+static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->action_entry.active) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char path[FS_NAV_MAX_PATH];
+    esp_err_t err = file_browser_action_compose_path(ctx, path, sizeof(path));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = file_browser_delete_path(path);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to delete %s: %s", path, esp_err_to_name(err));
+        return err;
+    }
+
+    file_browser_clear_action_state(ctx);
+    return file_browser_reload();
+}
+
+static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len)
+{
+    if (!ctx || !ctx->action_entry.active || !out || out_len == 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (ctx->action_entry.directory[0] == '\0' || ctx->action_entry.name[0] == '\0') {
+        return ESP_ERR_INVALID_STATE;
+    }
+    int needed = snprintf(out, out_len, "%s/%s", ctx->action_entry.directory, ctx->action_entry.name);
+    if (needed < 0 || needed >= (int)out_len) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return ESP_OK;
+}
+
+static void file_browser_clear_action_state(file_browser_ctx_t *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+    file_browser_close_action_menu(ctx);
+    file_browser_close_delete_confirm(ctx);
+    file_browser_close_rename_dialog(ctx);
+    ctx->action_entry.active = false;
+    ctx->action_entry.is_dir = false;
+    ctx->action_entry.is_txt = false;
+    ctx->action_entry.name[0] = '\0';
+    ctx->action_entry.directory[0] = '\0';
 }
 
 static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *msg, bool error)
@@ -1321,319 +1687,6 @@ static void file_browser_close_rename_dialog(file_browser_ctx_t *ctx)
     ctx->rename_keyboard = NULL;
 }
 
-static esp_err_t file_browser_create_folder(file_browser_ctx_t *ctx, const char *name)
-{
-    char path[FS_NAV_MAX_PATH];
-    esp_err_t err = fs_nav_compose_path(&ctx->nav, name, path, sizeof(path));
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    if (mkdir(path, 0775) != 0) {
-        if (errno == EEXIST) {
-            return ESP_ERR_INVALID_STATE;
-        }
-        ESP_LOGE(TAG, "mkdir(%s) failed (errno=%d)", path, errno);
-        return ESP_FAIL;
-    }
-    return ESP_OK;
-}
-
-static bool file_browser_is_valid_name(const char *name)
-{
-    if (!name || name[0] == '\0') {
-        return false;
-    }
-    for (const char *p = name; *p; ++p) {
-        if (
-                *p == '\\' || *p == '/' || *p == ':' ||
-                *p == '*'  || *p == '?' || *p == '"' ||
-                *p == '<'  || *p == '>' || *p == '|'
-            ) 
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void file_browser_trim_whitespace(char *name)
-{
-    if (!name) {
-        return;
-    }
-    char *start = name;
-    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') {
-        start++;
-    }
-    char *end = start + strlen(start);
-    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r')) {
-        *--end = '\0';
-    }
-    if (start != name) {
-        memmove(name, start, (size_t)(end - start) + 1);
-    }
-}
-
-static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
-{
-    if (!ctx || !entry) {
-        return;
-    }
-    ctx->action_entry.active = true;
-    ctx->action_entry.is_dir = entry->is_dir;
-    ctx->action_entry.is_txt = !entry->is_dir && fs_text_is_txt(entry->name);
-    strlcpy(ctx->action_entry.name, entry->name, sizeof(ctx->action_entry.name));
-    const char *dir = fs_nav_current_path(&ctx->nav);
-    if (!dir) {
-        dir = "";
-    }
-    strlcpy(ctx->action_entry.directory, dir, sizeof(ctx->action_entry.directory));
-}
-
-static void file_browser_close_action_menu(file_browser_ctx_t *ctx)
-{
-    if (ctx && ctx->action_mbox) {
-        lv_msgbox_close(ctx->action_mbox);
-        ctx->action_mbox = NULL;
-    }
-}
-
-static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
-{
-    if (!ctx || !ctx->action_entry.active) {
-        return;
-    }
-    file_browser_close_action_menu(ctx);
-
-    lv_obj_t *mbox = lv_msgbox_create(NULL);
-    ctx->action_mbox = mbox;
-    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
-    lv_obj_center(mbox);
-
-    lv_obj_t *label = lv_label_create(mbox);
-    lv_label_set_text(label, ctx->action_entry.name);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t *footer = lv_obj_create(mbox);
-    lv_obj_remove_style_all(footer);
-    lv_obj_set_size(footer, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_gap(footer, 8, 0);
-
-    lv_obj_t *row1 = lv_obj_create(footer);
-    lv_obj_remove_style_all(row1);
-    lv_obj_set_size(row1, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row1, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_gap(row1, 8, 0);
-
-    lv_obj_t *rename_btn = lv_button_create(row1);
-    lv_obj_set_flex_grow(rename_btn, 1);
-    lv_obj_t *rename_lbl = lv_label_create(rename_btn);
-    lv_label_set_text(rename_lbl, "Rename");
-    lv_obj_center(rename_lbl);
-    lv_obj_set_user_data(rename_btn, (void *)FILE_BROWSER_ACTION_RENAME);
-    lv_obj_add_event_cb(rename_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
-
-    lv_obj_t *del_btn = lv_button_create(row1);
-    lv_obj_set_flex_grow(del_btn, 1);
-    lv_obj_t *del_lbl = lv_label_create(del_btn);
-    lv_label_set_text(del_lbl, "Delete");
-    lv_obj_center(del_lbl);
-    lv_obj_set_user_data(del_btn, (void *)FILE_BROWSER_ACTION_DELETE);
-    lv_obj_add_event_cb(del_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
-
-    bool has_edit = (!ctx->action_entry.is_dir && ctx->action_entry.is_txt);
-    if (has_edit) {
-        lv_obj_t *row2 = lv_obj_create(footer);
-        lv_obj_remove_style_all(row2);
-        lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_pad_gap(row2, 8, 0);
-
-        lv_obj_t *edit_btn = lv_button_create(row2);
-        lv_obj_set_flex_grow(edit_btn, 1);
-        lv_obj_t *edit_lbl = lv_label_create(edit_btn);
-        lv_label_set_text(edit_lbl, "Edit");
-        lv_obj_center(edit_lbl);
-        lv_obj_set_user_data(edit_btn, (void *)FILE_BROWSER_ACTION_EDIT);
-        lv_obj_add_event_cb(edit_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
-
-        lv_obj_t *cancel_btn = lv_button_create(row2);
-        lv_obj_set_flex_grow(cancel_btn, 1);
-        lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
-        lv_label_set_text(cancel_lbl, "Cancel");
-        lv_obj_center(cancel_lbl);
-        lv_obj_set_user_data(cancel_btn, (void *)FILE_BROWSER_ACTION_CANCEL);
-        lv_obj_add_event_cb(cancel_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
-    } else {
-        lv_obj_t *cancel_btn = lv_button_create(row1);
-        lv_obj_set_flex_grow(cancel_btn, 1);
-        lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
-        lv_label_set_text(cancel_lbl, "Cancel");
-        lv_obj_center(cancel_lbl);
-        lv_obj_set_user_data(cancel_btn, (void *)FILE_BROWSER_ACTION_CANCEL);
-        lv_obj_add_event_cb(cancel_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
-    }
-}
-
-static void file_browser_clear_action_state(file_browser_ctx_t *ctx)
-{
-    if (!ctx) {
-        return;
-    }
-    file_browser_close_action_menu(ctx);
-    file_browser_close_delete_confirm(ctx);
-    file_browser_close_rename_dialog(ctx);
-    ctx->action_entry.active = false;
-    ctx->action_entry.is_dir = false;
-    ctx->action_entry.is_txt = false;
-    ctx->action_entry.name[0] = '\0';
-    ctx->action_entry.directory[0] = '\0';
-}
-
-static void file_browser_on_action_button(lv_event_t *e)
-{
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx) {
-        return;
-    }
-    file_browser_action_type_t action = (file_browser_action_type_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-
-    file_browser_close_action_menu(ctx);
-
-    switch (action) {
-        case FILE_BROWSER_ACTION_EDIT: {
-            if (!ctx->action_entry.active || ctx->action_entry.is_dir || !ctx->action_entry.is_txt) {
-                return;
-            }
-            char path[FS_NAV_MAX_PATH];
-            if (file_browser_action_compose_path(ctx, path, sizeof(path)) != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to compose path for edit");
-                return;
-            }
-            text_viewer_open_opts_t opts = {
-                .path = path,
-                .return_screen = ctx->screen,
-                .editable = true,
-                .on_close = file_browser_editor_closed,
-                .user_ctx = ctx,
-            };
-            esp_err_t err = text_viewer_open(&opts);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to edit \"%s\": %s", ctx->action_entry.name, esp_err_to_name(err));
-            } else {
-                file_browser_clear_action_state(ctx);
-            }
-            break;
-        }
-        case FILE_BROWSER_ACTION_RENAME:
-            file_browser_show_rename_dialog(ctx);
-            break;
-        case FILE_BROWSER_ACTION_DELETE:
-            file_browser_show_delete_confirm(ctx);
-            break;
-        case FILE_BROWSER_ACTION_CANCEL:
-        default:
-            file_browser_clear_action_state(ctx);
-            break;
-    }
-}
-
-static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx)
-{
-    if (ctx && ctx->confirm_mbox) {
-        lv_msgbox_close(ctx->confirm_mbox);
-        ctx->confirm_mbox = NULL;
-    }
-}
-
-static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx)
-{
-    if (!ctx || !ctx->action_entry.active) {
-        return;
-    }
-    file_browser_close_delete_confirm(ctx);
-
-    lv_obj_t *mbox = lv_msgbox_create(NULL);
-    ctx->confirm_mbox = mbox;
-    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
-    lv_obj_center(mbox);
-
-    lv_obj_t *label = lv_label_create(mbox);
-    lv_label_set_text_fmt(label, "Delete \"%s\"?", ctx->action_entry.name);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t *yes_btn = lv_msgbox_add_footer_button(mbox, "Yes");
-    lv_obj_set_user_data(yes_btn, (void *)1);
-    lv_obj_add_event_cb(yes_btn, file_browser_on_delete_confirm, LV_EVENT_CLICKED, ctx);
-
-    lv_obj_t *no_btn = lv_msgbox_add_footer_button(mbox, "No");
-    lv_obj_set_user_data(no_btn, (void *)0);
-    lv_obj_add_event_cb(no_btn, file_browser_on_delete_confirm, LV_EVENT_CLICKED, ctx);
-}
-
-static void file_browser_on_delete_confirm(lv_event_t *e)
-{
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx) {
-        return;
-    }
-    bool confirm = (bool)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-    file_browser_close_delete_confirm(ctx);
-
-    if (!confirm) {
-        file_browser_clear_action_state(ctx);
-        return;
-    }
-
-    esp_err_t err = file_browser_delete_selected_entry(ctx);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Delete failed: %s", esp_err_to_name(err));
-    }
-}
-
-static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx)
-{
-    if (!ctx || !ctx->action_entry.active) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    char path[FS_NAV_MAX_PATH];
-    esp_err_t err = file_browser_action_compose_path(ctx, path, sizeof(path));
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = file_browser_delete_path(path);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to delete %s: %s", path, esp_err_to_name(err));
-        return err;
-    }
-
-    file_browser_clear_action_state(ctx);
-    return file_browser_reload();
-}
-
-static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len)
-{
-    if (!ctx || !ctx->action_entry.active || !out || out_len == 0) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (ctx->action_entry.directory[0] == '\0' || ctx->action_entry.name[0] == '\0') {
-        return ESP_ERR_INVALID_STATE;
-    }
-    int needed = snprintf(out, out_len, "%s/%s", ctx->action_entry.directory, ctx->action_entry.name);
-    if (needed < 0 || needed >= (int)out_len) {
-        return ESP_ERR_INVALID_SIZE;
-    }
-    return ESP_OK;
-}
-
 static void file_browser_on_rename_accept(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1691,26 +1744,6 @@ static void file_browser_on_rename_cancel(lv_event_t *e)
     file_browser_clear_action_state(ctx);
 }
 
-static void file_browser_on_rename_keyboard_cancel(lv_event_t *e)
-{
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->rename_keyboard) {
-        return;
-    }
-    lv_keyboard_set_textarea(ctx->rename_keyboard, NULL);
-    lv_obj_add_flag(ctx->rename_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void file_browser_on_rename_textarea_clicked(lv_event_t *e)
-{
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->rename_keyboard || !ctx->rename_textarea) {
-        return;
-    }
-    lv_keyboard_set_textarea(ctx->rename_keyboard, ctx->rename_textarea);
-    lv_obj_clear_flag(ctx->rename_keyboard, LV_OBJ_FLAG_HIDDEN);
-}
-
 static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name)
 {
     if (!ctx || !ctx->action_entry.active || !new_name || new_name[0] == '\0') {
@@ -1740,55 +1773,22 @@ static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char
     return ESP_OK;
 }
 
-static esp_err_t file_browser_delete_path(const char *path)
+static void file_browser_on_rename_keyboard_cancel(lv_event_t *e)
 {
-    if (!path || path[0] == '\0') {
-        return ESP_ERR_INVALID_ARG;
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->rename_keyboard) {
+        return;
     }
+    lv_keyboard_set_textarea(ctx->rename_keyboard, NULL);
+    lv_obj_add_flag(ctx->rename_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
 
-    struct stat st = {0};
-    if (stat(path, &st) != 0) {
-        if (errno == ENOENT) {
-            return ESP_OK;
-        }
-        ESP_LOGE(TAG, "stat(%s) failed (errno=%d)", path, errno);
-        return ESP_FAIL;
+static void file_browser_on_rename_textarea_clicked(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->rename_keyboard || !ctx->rename_textarea) {
+        return;
     }
-
-    if (S_ISDIR(st.st_mode)) {
-        DIR *dir = opendir(path);
-        if (!dir) {
-            ESP_LOGE(TAG, "opendir(%s) failed (errno=%d)", path, errno);
-            return ESP_FAIL;
-        }
-        struct dirent *dent = NULL;
-        while ((dent = readdir(dir)) != NULL) {
-            if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) {
-                continue;
-            }
-            char child[FS_NAV_MAX_PATH];
-            int needed = snprintf(child, sizeof(child), "%s/%s", path, dent->d_name);
-            if (needed < 0 || needed >= (int)sizeof(child)) {
-                closedir(dir);
-                return ESP_ERR_INVALID_SIZE;
-            }
-            esp_err_t err = file_browser_delete_path(child);
-            if (err != ESP_OK) {
-                closedir(dir);
-                return err;
-            }
-        }
-        closedir(dir);
-        if (rmdir(path) != 0) {
-            ESP_LOGE(TAG, "rmdir(%s) failed (errno=%d)", path, errno);
-            return ESP_FAIL;
-        }
-        return ESP_OK;
-    }
-
-    if (remove(path) != 0) {
-        ESP_LOGE(TAG, "remove(%s) failed (errno=%d)", path, errno);
-        return ESP_FAIL;
-    }
-    return ESP_OK;
+    lv_keyboard_set_textarea(ctx->rename_keyboard, ctx->rename_textarea);
+    lv_obj_clear_flag(ctx->rename_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
