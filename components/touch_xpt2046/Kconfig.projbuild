@@ -63,3 +63,4 @@ menu "Touch Controller XPT2046 Configuration"
         default 0
 
 endmenu
+
