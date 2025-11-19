@@ -41,6 +41,14 @@ typedef struct{
  */
 sdspi_result_t init_sdspi(void);
 
+/**
+ * @brief Centralized error handler invoked when @ref init_sdspi fails.
+ *
+ * Currently retries on any recoverable SDSPI failcode; future cases can add
+ * more granular behavior.
+ *
+ * @param res Structured error returned by @ref init_sdspi.
+ */
 void sdspi_fallback(sdspi_result_t res);
 
 #ifdef __cplusplus

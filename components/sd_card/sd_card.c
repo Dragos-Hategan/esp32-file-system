@@ -9,18 +9,14 @@
 
 #include "bsp/esp-bsp.h"
 #include "driver/sdspi_host.h"
-#include "esp_vfs_fat.h"
 #include "esp_log.h"
+#include "esp_vfs_fat.h"
 #include "lvgl.h"
 #include "sdmmc_cmd.h"
 
-#define SDSPI_RETRY_UI_STEP_MS  50
-#define SDSPI_RETRY_DELAY_MS    500
-#define SDSPI_MAX_RETRIES       5
-
-static const char* TAG = "sd_card";
-static sdmmc_card_t *sd_card_handle = NULL;
-static bool sd_spi_bus_ready = false;
+#define SDSPI_RETRY_UI_STEP_MS  50U
+#define SDSPI_RETRY_DELAY_MS    500U
+#define SDSPI_MAX_RETRIES       5U
 
 typedef struct {
     SemaphoreHandle_t semaphore;
@@ -33,6 +29,163 @@ typedef struct {
     lv_obj_t *arc;
     uint32_t total_duration_ms;
 } sdspi_retry_ui_t;
+
+static const char *TAG = "sd_card";
+static sdmmc_card_t *sd_card_handle = NULL;
+static bool sd_spi_bus_ready = false;
+
+/**
+ * @brief LVGL callback fired when the retry dialog button is tapped.
+ *
+ * Gives the semaphore that wakes @ref sdspi_retry_wait_for_confirmation().
+ *
+ * @param e LVGL event descriptor (expects @c LV_EVENT_CLICKED).
+ */
+static void sdspi_retry_prompt_event_cb(lv_event_t *e);
+
+/**
+ * @brief Show a modal prompt asking the user to check SD wiring.
+ *
+ * Blocks until the user taps the OK button. The dialog is created on the top
+ * LVGL layer so it stays visible above any other UI.
+ */
+static void sdspi_retry_wait_for_confirmation(void);
+
+/**
+ * @brief Update the retry overlay message label.
+ *
+ * @param ui   Overlay descriptor.
+ * @param text New text (must be null-terminated).
+ */
+static void sdspi_retry_ui_set_message(sdspi_retry_ui_t *ui, const char *text);
+
+/**
+ * @brief Update the attempt label so the user sees current progress.
+ *
+ * @param ui      Overlay descriptor.
+ * @param attempt Attempt number starting at 1.
+ */
+static void sdspi_retry_ui_set_attempt(sdspi_retry_ui_t *ui, uint32_t attempt);
+
+/**
+ * @brief Drive the arc progress to match elapsed retry time.
+ *
+ * @param ui         Overlay descriptor.
+ * @param elapsed_ms Time already spent waiting.
+ */
+static void sdspi_retry_ui_set_progress(sdspi_retry_ui_t *ui, uint32_t elapsed_ms);
+
+/**
+ * @brief Block for @p wait_ms while keeping the overlay animation fluid.
+ *
+ * @param ui         Overlay descriptor (optional).
+ * @param elapsed_ms Running millisecond counter shared across retries.
+ * @param wait_ms    Milliseconds to wait.
+ */
+static void sdspi_retry_ui_wait(sdspi_retry_ui_t *ui, uint32_t *elapsed_ms, uint32_t wait_ms);
+
+/**
+ * @brief Tear down the retry overlay UI.
+ *
+ * @param ui Overlay descriptor to clean.
+ */
+static void sdspi_retry_ui_destroy(sdspi_retry_ui_t *ui);
+
+/**
+ * @brief Build the LVGL overlay used while retrying SDSPI init.
+ *
+ * @param ui                 Descriptor to populate.
+ * @param total_duration_ms  Total wait duration (used to scale the arc).
+ */
+static void sdspi_retry_ui_create(sdspi_retry_ui_t *ui, uint32_t total_duration_ms);
+
+/**
+ * @brief Prompt the user then retry SD card initialization with UI feedback.
+ *
+ * @return true  if the bus/card recovered inside @ref SDSPI_MAX_RETRIES.
+ * @return false once all retries are exhausted.
+ */
+static bool retry_init_sdspi(void);
+
+sdspi_result_t init_sdspi(void)
+{
+    const char *TAG_INIT_SDSPI = "init_sdspi";
+
+    sdspi_result_t sdspi_result = {
+        .sdspi_failcode = SDSPI_SUCCESS,
+        .esp_err = ESP_OK
+    };
+
+    if (!sd_spi_bus_ready) {
+        ESP_LOGI(TAG_INIT_SDSPI, "Initializing SPI bus");
+        spi_bus_config_t spi_bus_config = {
+            .mosi_io_num = CONFIG_SDSPI_BUS_MOSI_PIN,
+            .miso_io_num = CONFIG_SDSPI_BUS_MISO_PIN,
+            .sclk_io_num = CONFIG_SPSPI_BUS_SCL_PIN,
+            .max_transfer_sz = 4096,
+        };
+        esp_err_t err = spi_bus_initialize(CONFIG_SDSPI_BUS_HOST, &spi_bus_config, SPI_DMA_CH_AUTO);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_INIT_SDSPI, "Failed to init SDSPI bus: (%s)", esp_err_to_name(err));
+            sdspi_result.sdspi_failcode = SDSPI_SPI_BUS_FAILED;
+            sdspi_result.esp_err = err;
+            return sdspi_result;
+        }
+        sd_spi_bus_ready = true;
+    }
+
+    if (sd_card_handle) {
+        ESP_LOGI(TAG_INIT_SDSPI, "SDSPI already mounted at %s", CONFIG_SDSPI_MOUNT_POINT);
+        return sdspi_result;
+    }
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.max_freq_khz = CONFIG_SDSPI_MAX_FREQ_KHZ;
+    host.slot = CONFIG_SDSPI_BUS_HOST;
+
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = CONFIG_SDSPI_DEVICE_CS_PIN;
+    slot_config.host_id = CONFIG_SDSPI_BUS_HOST;
+
+    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+        .allocation_unit_size = 16 * 1024,
+        .format_if_mount_failed = false,
+        .max_files = 5,
+    };
+
+    ESP_LOGI(TAG_INIT_SDSPI, "Mounting SDSPI filesystem at %s", CONFIG_SDSPI_MOUNT_POINT);
+    esp_err_t err = esp_vfs_fat_sdspi_mount(CONFIG_SDSPI_MOUNT_POINT, &host, &slot_config, &mount_config, &sd_card_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG_INIT_SDSPI, "Failed to init SD card: (%s). Check wiring/pull-ups.", esp_err_to_name(err));
+        sdspi_result.sdspi_failcode = SDSPI_FAT_MOUNT_FAILED;
+        sdspi_result.esp_err = err;
+        sd_card_handle = NULL;
+        return sdspi_result;
+    }
+
+    sdmmc_card_print_info(stdout, sd_card_handle);
+    ESP_LOGI(TAG_INIT_SDSPI, "SDSPI ready");
+
+    return sdspi_result;
+}
+
+void sdspi_fallback(sdspi_result_t res)
+{
+    switch (res.sdspi_failcode) {
+        case SDSPI_SPI_BUS_FAILED:
+        case SDSPI_FAT_MOUNT_FAILED:
+        case SDSPI_COMMUNICATION_FAILED:
+            if (!retry_init_sdspi()){
+                // esp_restart() or continue without file browser?
+            }
+            break;
+
+        default:
+            ESP_LOGE("sdspi", "Unknown SDSPI error (failcode=%d, esp_err=%s)",
+                     res.sdspi_failcode, esp_err_to_name(res.esp_err));
+            break;
+    }
+}
 
 static void sdspi_retry_prompt_event_cb(lv_event_t *e)
 {
@@ -82,7 +235,7 @@ static void sdspi_retry_wait_for_confirmation(void)
     lv_refr_now(NULL);
     bsp_display_unlock();
 
-    if (xSemaphoreTake(ctx.semaphore, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(ctx.semaphore, portMAX_DELAY) != pdTRUE) {
         ESP_LOGW(TAG, "SDSPI retry prompt wait aborted");
     }
 
@@ -250,68 +403,6 @@ static void sdspi_retry_ui_create(sdspi_retry_ui_t *ui, uint32_t total_duration_
     bsp_display_unlock();
 }
 
-sdspi_result_t init_sdspi(void)
-{
-    const char *TAG_INIT_SDSPI = "init_sdspi";
-
-    sdspi_result_t sdspi_result = {
-        .sdspi_failcode = SDSPI_SUCCESS,
-        .esp_err = ESP_OK
-    };
-
-    if (!sd_spi_bus_ready) {
-        ESP_LOGI(TAG_INIT_SDSPI, "Initializing SPI bus");
-        spi_bus_config_t spi_bus_config = {
-            .mosi_io_num = CONFIG_SDSPI_BUS_MOSI_PIN,
-            .miso_io_num = CONFIG_SDSPI_BUS_MISO_PIN,
-            .sclk_io_num = CONFIG_SPSPI_BUS_SCL_PIN,
-            .max_transfer_sz = 4096,
-        };
-        esp_err_t err = spi_bus_initialize(CONFIG_SDSPI_BUS_HOST, &spi_bus_config, SPI_DMA_CH_AUTO);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG_INIT_SDSPI, "Failed to init SDSPI bus: (%s)", esp_err_to_name(err));
-            sdspi_result.sdspi_failcode = SDSPI_SPI_BUS_FAILED;
-            sdspi_result.esp_err = err;
-            return sdspi_result;
-        }
-        sd_spi_bus_ready = true;
-    }
-
-    if (sd_card_handle) {
-        ESP_LOGI(TAG_INIT_SDSPI, "SDSPI already mounted at %s", CONFIG_SDSPI_MOUNT_POINT);
-        return sdspi_result;
-    }
-
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.max_freq_khz = CONFIG_SDSPI_MAX_FREQ_KHZ;
-    host.slot = CONFIG_SDSPI_BUS_HOST;
-
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = CONFIG_SDSPI_DEVICE_CS_PIN;
-    slot_config.host_id = CONFIG_SDSPI_BUS_HOST;
-
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .allocation_unit_size = 16 * 1024,
-        .format_if_mount_failed = false,
-        .max_files = 5,
-    };
-
-    ESP_LOGI(TAG_INIT_SDSPI, "Mounting SDSPI filesystem at %s", CONFIG_SDSPI_MOUNT_POINT);
-    esp_err_t err = esp_vfs_fat_sdspi_mount(CONFIG_SDSPI_MOUNT_POINT, &host, &slot_config, &mount_config, &sd_card_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG_INIT_SDSPI, "Failed to init SD card: (%s). Check wiring/pull-ups.", esp_err_to_name(err));
-        sdspi_result.sdspi_failcode = SDSPI_FAT_MOUNT_FAILED;
-        sdspi_result.esp_err = err;
-        sd_card_handle = NULL;
-        return sdspi_result;
-    }
-
-    sdmmc_card_print_info(stdout, sd_card_handle);
-    ESP_LOGI(TAG_INIT_SDSPI, "SDSPI ready");
-
-    return sdspi_result;
-}
-
 static bool retry_init_sdspi(void)
 {
     sdspi_retry_wait_for_confirmation();
@@ -324,44 +415,27 @@ static bool retry_init_sdspi(void)
     uint32_t elapsed_ms = 0;
 
     for (int attempt = 1; attempt <= SDSPI_MAX_RETRIES; attempt++) {
-        ESP_LOGW(TAG, "Retrying SDSPI init %d/%d...", attempt, SDSPI_MAX_RETRIES);
+        ESP_LOGW(TAG, "Retrying SD card init %d/%d...", attempt, SDSPI_MAX_RETRIES);
         sdspi_retry_ui_set_attempt(&retry_ui, attempt);
         sdspi_retry_ui_wait(&retry_ui, &elapsed_ms, SDSPI_RETRY_DELAY_MS);
 
         retry_res = init_sdspi();
         if (retry_res.sdspi_failcode == SDSPI_SUCCESS) {
-            sdspi_retry_ui_set_message(&retry_ui, "SDSPI recovered");
+            sdspi_retry_ui_set_message(&retry_ui, "SD card recovered");
             sdspi_retry_ui_set_progress(&retry_ui, total_wait_ms);
             sdspi_retry_ui_destroy(&retry_ui);
-            ESP_LOGW(TAG, "SDSPI recovered after %d attempt(s)", attempt);
+            ESP_LOGW(TAG, "SD card recovered after %d attempt(s)", attempt);
             return true;
         }
     }
 
-    sdspi_retry_ui_set_message(&retry_ui, "SDSPI retry failed");
+    sdspi_retry_ui_set_message(&retry_ui, "SD card retry failed");
     sdspi_retry_ui_set_progress(&retry_ui, total_wait_ms);
     sdspi_retry_ui_destroy(&retry_ui);
 
-    ESP_LOGE(TAG, "SDSPI SPI init failed after %d retries. Last ESP err: %s",
+    ESP_LOGE(TAG, "SD card init failed after %d retries. Last ESP err: %s",
              SDSPI_MAX_RETRIES,
              esp_err_to_name(retry_res.esp_err));
 
     return false;
-}
-
-void sdspi_fallback(sdspi_result_t res){
-    switch (res.sdspi_failcode) {
-        case SDSPI_SPI_BUS_FAILED:
-        case SDSPI_FAT_MOUNT_FAILED:
-        case SDSPI_COMMUNICATION_FAILED:
-            if (!retry_init_sdspi()){
-                // esp_restart() or continue without file browser?
-            }
-            break;
-
-        default:
-            ESP_LOGE("sdspi", "Unknown SDSPI error (failcode=%d, esp_err=%s)",
-                     res.sdspi_failcode, esp_err_to_name(res.esp_err));
-            break;
-    }
 }

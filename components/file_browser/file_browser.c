@@ -566,7 +566,7 @@ static void file_browser_on_rename_textarea_clicked(lv_event_t *e);
 
 esp_err_t file_browser_start(void)
 {
-    const char* TAG_FILE_BROWSER_START = "File browser start";
+    const char* TAG_FILE_BROWSER_START = "file_browser_start";
 
     file_browser_config_t browser_cfg = {
         .root_path = CONFIG_SDSPI_MOUNT_POINT,
@@ -589,7 +589,7 @@ esp_err_t file_browser_start(void)
 
     esp_err_t nav_err = fs_nav_init(&ctx->nav, &nav_cfg);
     if (nav_err != ESP_OK) {
-        ESP_LOGE(TAG_FILE_BROWSER_START, "Failed to initialize the fyle system navigator: (%s)", esp_err_to_name(nav_err));
+        ESP_LOGE(TAG_FILE_BROWSER_START, "Failed to initialize the file system navigator: (%s)", esp_err_to_name(nav_err));
         file_browser_show_error_screen(browser_cfg.root_path, nav_err);
         return nav_err;
     }
