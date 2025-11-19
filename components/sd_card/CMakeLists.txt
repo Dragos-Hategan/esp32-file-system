@@ -1,15 +1,14 @@
 idf_component_register(
-    SRCS "file_browser.c" "fs_navigator.c" "fs_text_ops.c" "text_viewer_screen.c"
+    SRCS "sd_card.c"
     INCLUDE_DIRS "include"
     REQUIRES
         esp_bsp_generic 
         esp_common     
-        lvgl
-        sd_card
+        lvgl          
     PRIV_REQUIRES
         esp_driver_sdspi
         esp_hw_support  
         nvs_flash       
         fatfs           
-        sdmmc           
+        sdmmc
 )
