@@ -84,33 +84,19 @@ static TaskHandle_t s_sd_retry_task = NULL;
  * @param[in,out] ctx Browser context.
  */
  static void file_browser_sync_view(file_browser_ctx_t *ctx);
+
+ /**
+ * @brief Launch the SD retry worker task if one is not already running.
+ */
 static void file_browser_schedule_sd_retry(void);
 
-static void file_browser_sd_retry_task(void *param)
-{
-    retry_init_sdspi();
-    s_sd_retry_task = NULL;
-    vTaskDelete(NULL);
-}
-
-static void file_browser_schedule_sd_retry(void)
-{
-    if (s_sd_retry_task) {
-        return;
-    }
-
-    BaseType_t res = xTaskCreatePinnedToCore(file_browser_sd_retry_task,
-                                             "fb_sd_retry",
-                                             FILE_BROWSER_SD_RETRY_STACK,
-                                             NULL,
-                                             FILE_BROWSER_SD_RETRY_PRIO,
-                                             &s_sd_retry_task,
-                                             tskNO_AFFINITY);
-    if (res != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create SD retry task");
-        s_sd_retry_task = NULL;
-    }
-}
+/**
+ * @brief Blocking worker task used to retry SDSPI init without stalling LVGL callbacks.
+ *
+ * Running the retry flow in its own FreeRTOS task keeps the UI responsive while the
+ * modal dialog waits for user confirmation and the SDSPI driver reinitializes.
+ */
+static void file_browser_sd_retry_task(void *param);
 
 /**
  * @brief Update the path label from the current navigator path.
@@ -700,6 +686,32 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     file_browser_update_path_label(ctx);
     file_browser_update_sort_badges(ctx);
     file_browser_populate_list(ctx);
+}
+
+static void file_browser_sd_retry_task(void *param)
+{
+    retry_init_sdspi();
+    s_sd_retry_task = NULL;
+    vTaskDelete(NULL);
+}
+
+static void file_browser_schedule_sd_retry(void)
+{
+    if (s_sd_retry_task) {
+        return;
+    }
+
+    BaseType_t res = xTaskCreatePinnedToCore(file_browser_sd_retry_task,
+                                             "fb_sd_retry",
+                                             FILE_BROWSER_SD_RETRY_STACK,
+                                             NULL,
+                                             FILE_BROWSER_SD_RETRY_PRIO,
+                                             &s_sd_retry_task,
+                                             tskNO_AFFINITY);
+    if (res != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create SD retry task");
+        s_sd_retry_task = NULL;
+    }
 }
 
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
