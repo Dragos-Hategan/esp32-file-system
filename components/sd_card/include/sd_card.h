@@ -4,9 +4,14 @@
 extern "C" {
 #endif
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
 #include <stdbool.h>
 #include "esp_err.h"
 
+extern SemaphoreHandle_t reconnection_success;
 
 /**
  * @brief Initialize (or reinitialize) the SDSPI bus and mount the SD card filesystem.

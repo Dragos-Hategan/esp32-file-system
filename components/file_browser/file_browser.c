@@ -24,6 +24,9 @@
 
 #define FILE_BROWSER_MAX_ENTRIES_DEFAULT 512
 
+#define FILE_BROWSER_WAIT_STACK   (6 * 1024)
+#define FILE_BROWSER_WAIT_PRIO    (4)
+
 typedef struct {
     bool active;
     bool is_dir;
@@ -60,8 +63,29 @@ typedef struct {
 } file_browser_ctx_t;
 
 static file_browser_ctx_t s_browser;
+static TaskHandle_t file_browser_wait_task = NULL;
 
 /************************************ UI & Data Refresh Helpers ***********************************/
+
+/**
+ * @brief Launch a helper task that waits for SD reconnection.
+ *
+ * Creates @c file_browser_wait_for_reconnection_task if it is not already
+ * running. The helper blocks on the @ref reconnection_success semaphore and,
+ * once the SD retry flow signals recovery, refreshes the browser view.
+ */
+static void file_browser_schedule_wait_for_reconnection(void);
+
+/**
+ * @brief Worker that blocks until SD reconnection completes, then reloads UI.
+ *
+ * Waits indefinitely on @ref reconnection_success. Once the semaphore is given
+ * (meaning @ref retry_init_sdspi succeeded) it calls @ref file_browser_reload.
+ * If the reload fails the device restarts to recover from the fatal state.
+ *
+ * @param arg Unused.
+ */
+static void file_browser_wait_for_reconnection_task(void* arg);
 
 /**
  * @brief Build the LVGL screen hierarchy (header + list).
@@ -662,6 +686,40 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_pad_all(ctx->list, 0, 0);
 }
 
+static void file_browser_schedule_wait_for_reconnection(void)
+{
+    if (file_browser_wait_task){
+        return;
+    }
+    
+    BaseType_t res = xTaskCreatePinnedToCore(file_browser_wait_for_reconnection_task,
+                                             "file_browser_wait_task",
+                                             FILE_BROWSER_WAIT_STACK,
+                                             NULL,
+                                             FILE_BROWSER_WAIT_PRIO,
+                                             &file_browser_wait_task,
+                                             tskNO_AFFINITY);
+
+    if (res != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create file browser wait task");
+        file_browser_wait_task = NULL;
+    }                                             
+}
+
+static void file_browser_wait_for_reconnection_task(void* arg)
+{
+    if (xSemaphoreTake(reconnection_success, portMAX_DELAY) == pdTRUE){
+        esp_err_t err = file_browser_reload();
+        if (err != ESP_OK){
+            ESP_LOGE(TAG, "file_browser_reload() failed while trying to refresh the screen after a sd card reconnection, restaring...\n");
+            esp_restart();
+        }
+    }
+
+    file_browser_wait_task = NULL;
+    vTaskDelete(NULL);
+}
+
 static void file_browser_sync_view(file_browser_ctx_t *ctx)
 {
     if (!ctx->screen) {
@@ -803,6 +861,7 @@ static void file_browser_on_entry_click(lv_event_t *e)
         } else {
             ESP_LOGE(TAG, "Failed to enter \"%s\": %s", entry->name, esp_err_to_name(err));
             sdspi_schedule_sd_retry();
+            file_browser_schedule_wait_for_reconnection();
         }
         return;
     }
@@ -1066,6 +1125,7 @@ static void file_browser_on_folder_create(lv_event_t *e)
                                            true);
         } else {
             file_browser_set_folder_status(ctx, esp_err_to_name(err), true);
+            sdspi_schedule_sd_retry();
         }
         return;
     }

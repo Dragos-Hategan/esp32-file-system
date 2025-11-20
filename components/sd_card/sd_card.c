@@ -3,10 +3,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-
 #include "bsp/esp-bsp.h"
 #include "driver/sdspi_host.h"
 #include "esp_log.h"
@@ -37,6 +33,8 @@ static const char *TAG = "sd_card";
 static sdmmc_card_t *sd_card_handle = NULL;
 static bool sd_spi_bus_ready = false;
 static TaskHandle_t s_sd_retry_task = NULL;
+
+SemaphoreHandle_t reconnection_success = NULL;
 
 /**
  * @brief Blocking worker task used to retry SDSPI init without stalling LVGL callbacks.
@@ -165,6 +163,11 @@ esp_err_t init_sdspi(void)
     sdmmc_card_print_info(stdout, sd_card_handle);
     ESP_LOGI(TAG_INIT_SDSPI, "SDSPI ready");
 
+    if (!reconnection_success){
+        reconnection_success = xSemaphoreCreateBinary();
+        xSemaphoreTake(reconnection_success, 0);
+    }
+
     return ESP_OK;
 }
 
@@ -192,6 +195,7 @@ void retry_init_sdspi(void)
             ESP_LOGW(TAG, "SD card recovered after %d attempt(s)", attempt);
             vTaskDelay(pdMS_TO_TICKS(1500));
             sdspi_retry_ui_destroy(&retry_ui);
+            xSemaphoreGive(reconnection_success);
             return;
         }
     }
