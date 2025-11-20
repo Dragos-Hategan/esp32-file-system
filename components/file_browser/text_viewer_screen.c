@@ -168,7 +168,7 @@ static void text_viewer_on_screen_clicked(lv_event_t *e);
 static void text_viewer_on_text_changed(lv_event_t *e);
 
 /**
- * @brief Save handler: writes current text to file and closes on success.
+ * @brief Save handler: writes current text to file and updates status.
  *
  * Logs and shows an error status if the write fails.
  *
