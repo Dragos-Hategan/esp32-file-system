@@ -26,6 +26,11 @@ esp_err_t init_sdspi(void);
  */
 void retry_init_sdspi(void);
 
+ /**
+ * @brief Launch the SD retry worker task if one is not already running.
+ */
+void sdspi_schedule_sd_retry(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -60,10 +60,7 @@ typedef struct {
 } file_browser_ctx_t;
 
 static file_browser_ctx_t s_browser;
-static TaskHandle_t s_sd_retry_task = NULL;
 
-#define FILE_BROWSER_SD_RETRY_STACK   (6 * 1024)
-#define FILE_BROWSER_SD_RETRY_PRIO    (4)
 /************************************ UI & Data Refresh Helpers ***********************************/
 
 /**
@@ -84,19 +81,6 @@ static TaskHandle_t s_sd_retry_task = NULL;
  * @param[in,out] ctx Browser context.
  */
  static void file_browser_sync_view(file_browser_ctx_t *ctx);
-
- /**
- * @brief Launch the SD retry worker task if one is not already running.
- */
-static void file_browser_schedule_sd_retry(void);
-
-/**
- * @brief Blocking worker task used to retry SDSPI init without stalling LVGL callbacks.
- *
- * Running the retry flow in its own FreeRTOS task keeps the UI responsive while the
- * modal dialog waits for user confirmation and the SDSPI driver reinitializes.
- */
-static void file_browser_sd_retry_task(void *param);
 
 /**
  * @brief Update the path label from the current navigator path.
@@ -688,32 +672,6 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     file_browser_populate_list(ctx);
 }
 
-static void file_browser_sd_retry_task(void *param)
-{
-    retry_init_sdspi();
-    s_sd_retry_task = NULL;
-    vTaskDelete(NULL);
-}
-
-static void file_browser_schedule_sd_retry(void)
-{
-    if (s_sd_retry_task) {
-        return;
-    }
-
-    BaseType_t res = xTaskCreatePinnedToCore(file_browser_sd_retry_task,
-                                             "fb_sd_retry",
-                                             FILE_BROWSER_SD_RETRY_STACK,
-                                             NULL,
-                                             FILE_BROWSER_SD_RETRY_PRIO,
-                                             &s_sd_retry_task,
-                                             tskNO_AFFINITY);
-    if (res != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create SD retry task");
-        s_sd_retry_task = NULL;
-    }
-}
-
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
 {
     const char *path = fs_nav_current_path(&ctx->nav);
@@ -844,7 +802,7 @@ static void file_browser_on_entry_click(lv_event_t *e)
             file_browser_sync_view(ctx);
         } else {
             ESP_LOGE(TAG, "Failed to enter \"%s\": %s", entry->name, esp_err_to_name(err));
-            file_browser_schedule_sd_retry();
+            sdspi_schedule_sd_retry();
         }
         return;
     }
@@ -860,7 +818,7 @@ static void file_browser_on_entry_click(lv_event_t *e)
             esp_err_t err = text_viewer_open(&opts);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to view \"%s\": %s", entry->name, esp_err_to_name(err));
-                file_browser_schedule_sd_retry();
+                sdspi_schedule_sd_retry();
             }
         } else {
             ESP_LOGE(TAG, "Path too long for \"%s\"", entry->name);
@@ -904,9 +862,10 @@ static void file_browser_on_parent_click(lv_event_t *e)
     esp_err_t err = fs_nav_go_parent(&ctx->nav);
     if (err == ESP_OK) {
         file_browser_sync_view(ctx);
+        printf("A mers file_browser!\n");
     } else {
         ESP_LOGE(TAG, "Failed to go parent: %s", esp_err_to_name(err));
-        file_browser_schedule_sd_retry();
+        sdspi_schedule_sd_retry();
     }
 }
 
@@ -963,7 +922,7 @@ static void file_browser_on_new_txt_click(lv_event_t *e)
     esp_err_t err = text_viewer_open(&opts);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start new file editor: %s", esp_err_to_name(err));
-        file_browser_schedule_sd_retry();
+        sdspi_schedule_sd_retry();
     }
 }
 
@@ -977,7 +936,7 @@ static void file_browser_editor_closed(bool changed, void *user_ctx)
     esp_err_t err = file_browser_reload();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to reload after editor: %s", esp_err_to_name(err));
-        file_browser_schedule_sd_retry();
+        sdspi_schedule_sd_retry();
     }
 }
 
@@ -1115,7 +1074,7 @@ static void file_browser_on_folder_create(lv_event_t *e)
     esp_err_t reload = file_browser_reload();
     if (reload != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh after folder create: %s", esp_err_to_name(reload));
-        file_browser_schedule_sd_retry();
+        sdspi_schedule_sd_retry();
     }
 }
 
@@ -1412,7 +1371,7 @@ static void file_browser_on_action_button(lv_event_t *e)
             esp_err_t err = text_viewer_open(&opts);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to edit \"%s\": %s", ctx->action_entry.name, esp_err_to_name(err));
-                file_browser_schedule_sd_retry();
+                sdspi_schedule_sd_retry();
             } else {
                 file_browser_clear_action_state(ctx);
             }
@@ -1483,7 +1442,7 @@ static void file_browser_on_delete_confirm(lv_event_t *e)
     esp_err_t err = file_browser_delete_selected_entry(ctx);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Delete failed: %s", esp_err_to_name(err));
-        file_browser_schedule_sd_retry();
+        sdspi_schedule_sd_retry();
     }
 }
 
@@ -1684,6 +1643,7 @@ static void file_browser_on_rename_accept(lv_event_t *e)
                                            true);
         } else {
             file_browser_set_rename_status(ctx, esp_err_to_name(err), true);
+            sdspi_schedule_sd_retry();
         }
         return;
     }
@@ -1693,7 +1653,7 @@ static void file_browser_on_rename_accept(lv_event_t *e)
     esp_err_t reload = file_browser_reload();
     if (reload != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh after rename: %s", esp_err_to_name(reload));
-        file_browser_schedule_sd_retry();
+        sdspi_schedule_sd_retry();
     }
 }
 

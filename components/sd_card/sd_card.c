@@ -18,6 +18,9 @@
 #define SDSPI_RETRY_DELAY_MS    500U
 #define SDSPI_MAX_RETRIES       10U
 
+#define SD_RETRY_STACK   (6 * 1024)
+#define SD_RETRY_PRIO    (4)
+
 typedef struct {
     SemaphoreHandle_t semaphore;
 } sdspi_retry_prompt_ctx_t;
@@ -33,6 +36,15 @@ typedef struct {
 static const char *TAG = "sd_card";
 static sdmmc_card_t *sd_card_handle = NULL;
 static bool sd_spi_bus_ready = false;
+static TaskHandle_t s_sd_retry_task = NULL;
+
+/**
+ * @brief Blocking worker task used to retry SDSPI init without stalling LVGL callbacks.
+ *
+ * Running the retry flow in its own FreeRTOS task keeps the UI responsive while the
+ * modal dialog waits for user confirmation and the SDSPI driver reinitializes.
+ */
+static void sd_retry_task(void *param);
 
 /**
  * @brief LVGL callback fired when the retry dialog button is tapped.
@@ -194,6 +206,32 @@ void retry_init_sdspi(void)
              esp_err_to_name(err));
 
     esp_restart();
+}
+
+void sdspi_schedule_sd_retry(void)
+{
+    if (s_sd_retry_task) {
+        return;
+    }
+
+    BaseType_t res = xTaskCreatePinnedToCore(sd_retry_task,
+                                             "sd_retry",
+                                             SD_RETRY_STACK,
+                                             NULL,
+                                             SD_RETRY_PRIO,
+                                             &s_sd_retry_task,
+                                             tskNO_AFFINITY);
+    if (res != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create SD retry task");
+        s_sd_retry_task = NULL;
+    }
+}
+
+static void sd_retry_task(void *param)
+{
+    retry_init_sdspi();
+    s_sd_retry_task = NULL;
+    vTaskDelete(NULL);
 }
 
 static void sdspi_retry_prompt_event_cb(lv_event_t *e)

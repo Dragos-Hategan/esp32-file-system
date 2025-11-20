@@ -1,13 +1,14 @@
 #include "text_viewer_screen.h"
 
+#include <sys/stat.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/stat.h>
 
-#include "esp_log.h"
 #include "fs_navigator.h"
 #include "fs_text_ops.h"
+#include "esp_log.h"
+#include "sd_card.h"
 
 /**
  * @brief Runtime state for the singleton text viewer/editor screen.
@@ -592,6 +593,7 @@ static void text_viewer_handle_save(text_viewer_ctx_t *ctx)
     if (err != ESP_OK) {
         text_viewer_set_status(ctx, esp_err_to_name(err));
         ESP_LOGE(TAG, "Failed to save %s: %s", dest_path, esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
         return;
     }
 

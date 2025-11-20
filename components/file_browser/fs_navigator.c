@@ -183,11 +183,11 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
         nav->entry_count = 0;
         return ESP_FAIL;
     }
-
+    
     size_t limit = nav->max_entries ? nav->max_entries : SIZE_MAX;
     size_t count = 0;
     struct dirent *dent = NULL;
-
+    
     while ((dent = readdir(dir)) != NULL) {
         if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) {
             continue;
