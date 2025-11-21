@@ -350,6 +350,8 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
 
     char *content = NULL;
     size_t file_size_kb = 0;
+    size_t first_offset_kb = 0;
+    size_t second_offset_kb = 0;
     if (new_file)
     {
         content = strdup("");
@@ -360,17 +362,55 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     }
     else
     {
-        size_t len = 0;
+        char *chunk_a = NULL;
+        char *chunk_b = NULL;
+        size_t len_a = 0;
+        size_t len_b = 0;
         struct stat st = {0};
         if (stat(opts->path, &st) == 0 && S_ISREG(st.st_mode))
         {
             file_size_kb = (st.st_size > 0) ? ((size_t)st.st_size - 1u) / 1024u : 0;
         }
-        esp_err_t err = fs_text_read_range(opts->path, 0, &content, &len);
+        second_offset_kb = (file_size_kb > 0) ? 1 : 0;
+
+        esp_err_t err = fs_text_read_range(opts->path, first_offset_kb, &chunk_a, &len_a);
         if (err != ESP_OK)
         {
+            free(chunk_a);
             return err;
         }
+
+        if (second_offset_kb != first_offset_kb)
+        {
+            err = fs_text_read_range(opts->path, second_offset_kb, &chunk_b, &len_b);
+            if (err != ESP_OK)
+            {
+                free(chunk_a);
+                free(chunk_b);
+                return err;
+            }
+        }
+
+        size_t total = len_a + len_b;
+        content = (char *)malloc(total + 1);
+        if (!content)
+        {
+            free(chunk_a);
+            free(chunk_b);
+            return ESP_ERR_NO_MEM;
+        }
+        if (len_a)
+        {
+            memcpy(content, chunk_a, len_a);
+        }
+        if (len_b)
+        {
+            memcpy(content + len_a, chunk_b, len_b);
+        }
+        content[total] = '\0';
+
+        free(chunk_a);
+        free(chunk_b);
     }
 
     text_viewer_ctx_t *ctx = &s_viewer;
@@ -389,8 +429,8 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     ctx->close_cb = opts->on_close;
     ctx->close_ctx = opts->user_ctx;
 
-    ctx->current_file_offset_kb = 0;
-    ctx->lasf_file_offset_kb = 0;
+    ctx->current_file_offset_kb = second_offset_kb;
+    ctx->lasf_file_offset_kb = first_offset_kb;
     ctx->max_file_offset_kb = file_size_kb;
 
     ctx->name_dialog = NULL;
@@ -709,12 +749,7 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
             esp_err_t err = text_viewer_load_window(ctx, first_offset, next_offset);
             if (err == ESP_OK)
             {
-                if (first_offset == 0 && next_offset == 1){
-                    lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B);
-                }else{
-                    lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B - lv_obj_get_content_height(ctx->text_area));
-                }
-
+                lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B - lv_obj_get_content_height(ctx->text_area));
                 text_viewer_skip_cursor_animation(ctx);           
 
                 ctx->lasf_file_offset_kb = first_offset;
