@@ -155,52 +155,6 @@ esp_err_t fs_text_read_range(const char *path, size_t offset_kb, char **out_buf,
     return ESP_OK;
 }
 
-esp_err_t fs_text_read(const char *path, char **out_buf, size_t *out_len)
-{
-    if (!out_buf || !fs_text_check_path(path)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    struct stat st = {0};
-    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
-        ESP_LOGE(TAG, "stat(%s) failed (errno=%d)", path, errno);
-        return ESP_FAIL;
-    }
-    if ((size_t)st.st_size > FS_TEXT_MAX_BYTES) {
-        ESP_LOGE(TAG, "File %s too large (%ld bytes)", path, st.st_size);
-        return ESP_ERR_INVALID_SIZE;
-    }
-
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "fopen(%s) failed (errno=%d)", path, errno);
-        return ESP_FAIL;
-    }
-
-    size_t size = (size_t)st.st_size;
-    char *buf = (char *)malloc(size + 1);
-    if (!buf) {
-        fclose(f);
-        return ESP_ERR_NO_MEM;
-    }
-
-    size_t read = fread(buf, 1, size, f);
-    if (read != size && ferror(f)) {
-        ESP_LOGE(TAG, "fread(%s) failed (errno=%d)", path, errno);
-        free(buf);
-        fclose(f);
-        return ESP_FAIL;
-    }
-    buf[read] = '\0';
-
-    fclose(f);
-    *out_buf = buf;
-    if (out_len) {
-        *out_len = read;
-    }
-    return ESP_OK;
-}
-
 esp_err_t fs_text_write(const char *path, const char *data, size_t len)
 {
     if (!fs_text_check_path(path) || (!data && len > 0)) {

@@ -9,7 +9,6 @@ extern "C" {
 
 #include "esp_err.h"
 
-#define FS_TEXT_MAX_BYTES   (32 * 1024)
 #define READ_CHUNK_SIZE_B   (1 * 1024)
 #define FS_TEXT_MAX_PATH    512
 
@@ -71,17 +70,6 @@ esp_err_t fs_text_create(const char *path);
  * - The function only works with regular files.
  */
 esp_err_t fs_text_read_range(const char *path, size_t offset_kb, char **out_buf, size_t *out_len);
-
-/**
- * @brief Read a text file into a newly-allocated buffer.
- *
- * @param path     Absolute path to the .txt file.
- * @param out_buf  On success, points to a NUL-terminated heap buffer (caller must free).
- * @param out_len  Optional; set to the number of bytes read (excluding NUL).
- * @return ESP_OK on success, ESP_ERR_INVALID_ARG on bad params, ESP_ERR_INVALID_SIZE if file
- *         exceeds @ref FS_TEXT_MAX_BYTES, ESP_ERR_NO_MEM on allocation failure, ESP_FAIL on I/O error.
- */
-esp_err_t fs_text_read(const char *path, char **out_buf, size_t *out_len);
 
 /**
  * @brief Atomically replace (or create) a text file with the provided buffer.

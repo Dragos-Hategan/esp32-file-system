@@ -47,7 +47,7 @@ typedef struct {
  * @return
  *   - ESP_OK on success
  *   - ESP_ERR_INVALID_ARG if required options are missing
- *   - fs_text_read error codes if reading fails
+ *   - fs_text_read_range error codes if reading fails
  */
 esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts);
 

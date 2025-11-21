@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "file_browser.c" "fs_navigator.c" "fs_text_ops.c" "text_viewer_screen.c"
+    SRCS "text_viewer_screen.c" "file_browser.c" "fs_navigator.c" "fs_text_ops.c"
     INCLUDE_DIRS "include"
     REQUIRES
         esp_bsp_generic 
