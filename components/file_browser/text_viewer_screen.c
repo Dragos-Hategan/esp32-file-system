@@ -14,28 +14,33 @@
  * @brief Runtime state for the singleton text viewer/editor screen.
  */
 typedef struct {
-    bool active;                 /**< True while the viewer screen is active */
-    bool editable;               /**< True if edit mode is enabled */
-    bool dirty;                  /**< True if current text differs from original */
-    bool suppress_events;        /**< Temporarily disable change detection */
-    bool new_file;               /**< True if creating a new file */
-    lv_obj_t *screen;            /**< Root LVGL screen object */
-    lv_obj_t *toolbar;           /**< Toolbar container */
-    lv_obj_t *path_label;        /**< Label showing the file path */
-    lv_obj_t *status_label;      /**< Label showing transient status messages */
-    lv_obj_t *save_btn;          /**< Save button (hidden/disabled in view mode) */
-    lv_obj_t *text_area;         /**< Text area for viewing/editing content */
-    lv_obj_t *keyboard;          /**< On-screen keyboard */
-    lv_obj_t *return_screen;     /**< Screen to return to on close */
-    lv_obj_t *confirm_mbox;      /**< Confirmation message box (save/discard) */
-    lv_obj_t *name_dialog;       /**< Filename prompt dialog */
-    lv_obj_t *name_textarea;     /**< Text area used inside filename dialog */
-    text_viewer_close_cb_t close_cb;  /**< Optional close callback */
-    void *close_ctx;             /**< User context for close callback */
-    char path[FS_TEXT_MAX_PATH]; /**< Current file path */
-    char directory[FS_TEXT_MAX_PATH]; /**< Directory used for new files */
+    bool active;                        /**< True while the viewer screen is active */
+    bool dirty;                         /**< True if current text differs from original */
+    bool editable;                      /**< True if edit mode is enabled */
+    bool new_file;                      /**< True if creating a new file */
+    bool at_top_edge;                   /**< Tracks if the scroll is currently at the top edge */
+    bool at_bottom_edge;                /**< Tracks if the scroll is currently at the bottom edge */
+    bool suppress_events;               /**< Temporarily disable change detection */
+    size_t lasf_file_offset_kb;         /**< Offset (in KB) used for the last read chunk */
+    size_t current_file_offset_kb;      /**< Offset (in KB) used for the current/next chunk */
+    size_t max_file_offset_kb;          /**< Maximum readable offset (in KB) for the loaded file */
+    lv_obj_t *screen;                   /**< Root LVGL screen object */
+    lv_obj_t *toolbar;                  /**< Toolbar container */
+    lv_obj_t *path_label;               /**< Label showing the file path */
+    lv_obj_t *status_label;             /**< Label showing transient status messages */
+    lv_obj_t *save_btn;                 /**< Save button (hidden/disabled in view mode) */
+    lv_obj_t *text_area;                /**< Text area for viewing/editing content */
+    lv_obj_t *keyboard;                 /**< On-screen keyboard */
+    lv_obj_t *return_screen;            /**< Screen to return to on close */
+    lv_obj_t *confirm_mbox;             /**< Confirmation message box (save/discard) */
+    lv_obj_t *name_dialog;              /**< Filename prompt dialog */
+    lv_obj_t *name_textarea;            /**< Text area used inside filename dialog */
+    text_viewer_close_cb_t close_cb;    /**< Optional close callback */
+    void *close_ctx;                    /**< User context for close callback */
+    char path[FS_TEXT_MAX_PATH];        /**< Current file path */
+    char directory[FS_TEXT_MAX_PATH];   /**< Directory used for new files */
     char pending_name[FS_NAV_MAX_NAME]; /**< Suggested filename for new files */
-    char *original_text;         /**< Snapshot of text at load/save time */
+    char *original_text;                /**< Snapshot of text at load/save time */
 } text_viewer_ctx_t;
 
 /**
@@ -124,6 +129,12 @@ static void text_viewer_hide_keyboard(text_viewer_ctx_t *ctx);
  * @param e LVGL event.
  */
 static void text_viewer_on_text_area_clicked(lv_event_t *e);
+/**
+ * @brief Warn when scrolling past the ends of the text area.
+ *
+ * @param e LVGL event.
+ */
+static void text_viewer_on_text_scrolled(lv_event_t *e);
 
 /**
  * @brief Hide the keyboard when its cancel/close button is pressed.
@@ -305,6 +316,7 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     }
 
     char *content = NULL;
+    size_t file_size_kb = 0;
     if (new_file) {
         content = strdup("");
         if (!content) {
@@ -312,6 +324,10 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
         }
     } else {
         size_t len = 0;
+        struct stat st = {0};
+        if (stat(opts->path, &st) == 0 && S_ISREG(st.st_mode)) {
+            file_size_kb = (size_t)st.st_size / 1024u;
+        }
         esp_err_t err = fs_text_read_range(opts->path, 0, &content, &len);
         if (err != ESP_OK) {
             return err;
@@ -333,8 +349,14 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     ctx->close_cb = opts->on_close;
     ctx->close_ctx = opts->user_ctx;
 
+    ctx->current_file_offset_kb = 0;
+    ctx->lasf_file_offset_kb = 0;
+    ctx->max_file_offset_kb = file_size_kb;
+
     ctx->name_dialog = NULL;
     ctx->name_textarea = NULL;
+    ctx->at_top_edge = false;
+    ctx->at_bottom_edge = false;
 
     if (new_file) {
         ctx->path[0] = '\0';
@@ -417,6 +439,7 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
     lv_obj_set_width(ctx->text_area, LV_PCT(100));
     lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_changed, LV_EVENT_VALUE_CHANGED, ctx);
     lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_area_clicked, LV_EVENT_CLICKED, ctx);
+    lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_scrolled, LV_EVENT_SCROLL, ctx);
 
     ctx->keyboard = lv_keyboard_create(scr);
     lv_keyboard_set_textarea(ctx->keyboard, ctx->text_area);
@@ -503,6 +526,31 @@ static void text_viewer_on_text_area_clicked(lv_event_t *e)
         return;
     }
     text_viewer_show_keyboard(ctx, ctx->text_area);
+}
+
+static void text_viewer_on_text_scrolled(lv_event_t *e)
+{
+    text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+
+    bool at_top = lv_obj_get_scroll_top(ctx->text_area) <= 0;
+    bool at_bottom = lv_obj_get_scroll_bottom(ctx->text_area) <= 0;
+
+    if (at_top && !ctx->at_top_edge) {
+        ESP_LOGW(TAG, "Reached start of text area");
+        ctx->at_top_edge = true;
+    } else if (!at_top) {
+        ctx->at_top_edge = false;
+    }
+
+    if (at_bottom && !ctx->at_bottom_edge) {
+        ESP_LOGW(TAG, "Reached end of text area");
+        ctx->at_bottom_edge = true;
+    } else if (!at_bottom) {
+        ctx->at_bottom_edge = false;
+    }
 }
 
 static void text_viewer_on_keyboard_cancel(lv_event_t *e)
