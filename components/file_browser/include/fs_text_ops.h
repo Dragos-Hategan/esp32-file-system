@@ -10,6 +10,7 @@ extern "C" {
 #include "esp_err.h"
 
 #define FS_TEXT_MAX_BYTES   (32 * 1024)
+#define READ_CHUNK_SIZE_B   (1 * 1024)
 #define FS_TEXT_MAX_PATH    512
 
 /**

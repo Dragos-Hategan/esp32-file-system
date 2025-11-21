@@ -97,6 +97,16 @@ static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg);
 static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text);
 
 /**
+ * @brief Load two consecutive chunks into the textarea and position the cursor at the boundary.
+ *
+ * @param ctx             Viewer context.
+ * @param first_offset_kb Offset (KB) of the first chunk.
+ * @param second_offset_kb Offset (KB) of the second chunk.
+ * @return ESP_OK on success, error code otherwise.
+ */
+static esp_err_t text_viewer_load_window(text_viewer_ctx_t *ctx, size_t first_offset_kb, size_t second_offset_kb);
+
+/**
  * @brief Enable/disable the Save button based on @c editable and @c dirty.
  *
  * @param ctx Viewer context.
@@ -326,7 +336,7 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
         size_t len = 0;
         struct stat st = {0};
         if (stat(opts->path, &st) == 0 && S_ISREG(st.st_mode)) {
-            file_size_kb = (size_t)st.st_size / 1024u;
+            file_size_kb = (st.st_size > 0) ? ((size_t)st.st_size - 1u) / 1024u : 0;
         }
         esp_err_t err = fs_text_read_range(opts->path, 0, &content, &len);
         if (err != ESP_OK) {
@@ -481,6 +491,58 @@ static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text)
     ctx->original_text = text ? strdup(text) : NULL;
 }
 
+static esp_err_t text_viewer_load_window(text_viewer_ctx_t *ctx, size_t first_offset_kb, size_t second_offset_kb)
+{
+    if (!ctx || ctx->path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char *chunk_a = NULL;
+    char *chunk_b = NULL;
+    char *joined = NULL;
+    size_t len_a = 0;
+    size_t len_b = 0;
+
+    esp_err_t err = fs_text_read_range(ctx->path, first_offset_kb, &chunk_a, &len_a);
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+
+    if (second_offset_kb != first_offset_kb) {
+        err = fs_text_read_range(ctx->path, second_offset_kb, &chunk_b, &len_b);
+        if (err != ESP_OK) {
+            goto cleanup;
+        }
+    }
+
+    size_t total = len_a + len_b;
+    joined = (char *)malloc(total + 1);
+    if (!joined) {
+        err = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+
+    if (len_a) {
+        memcpy(joined, chunk_a, len_a);
+    }
+    if (len_b) {
+        memcpy(joined + len_a, chunk_b, len_b);
+    }
+    joined[total] = '\0';
+
+    bool prev_suppress = ctx->suppress_events;
+    ctx->suppress_events = true;
+    lv_textarea_set_text(ctx->text_area, joined);
+    lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)len_a);
+    ctx->suppress_events = prev_suppress;
+
+cleanup:
+    free(joined);
+    free(chunk_a);
+    free(chunk_b);
+    return err;
+}
+
 static void text_viewer_update_buttons(text_viewer_ctx_t *ctx)
 {
     if (!ctx->editable) {
@@ -541,6 +603,19 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
     if (at_top && !ctx->at_top_edge) {
         ESP_LOGW(TAG, "Reached start of text area");
         ctx->at_top_edge = true;
+
+        if (!ctx->new_file && ctx->lasf_file_offset_kb > 0) {
+            size_t new_first = ctx->lasf_file_offset_kb - 1;
+            size_t new_second = ctx->lasf_file_offset_kb;
+            esp_err_t err = text_viewer_load_window(ctx, new_first, new_second);
+            if (err == ESP_OK) {
+                ctx->lasf_file_offset_kb = new_first;
+                ctx->current_file_offset_kb = new_second;
+                ctx->at_bottom_edge = false;
+            } else {
+                ESP_LOGE(TAG, "Failed to load previous chunk: %s", esp_err_to_name(err));
+            }
+        }
     } else if (!at_top) {
         ctx->at_top_edge = false;
     }
@@ -548,6 +623,19 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
     if (at_bottom && !ctx->at_bottom_edge) {
         ESP_LOGW(TAG, "Reached end of text area");
         ctx->at_bottom_edge = true;
+
+        if (!ctx->new_file && ctx->current_file_offset_kb < ctx->max_file_offset_kb) {
+            size_t next_offset = ctx->current_file_offset_kb + 1;
+            size_t first_offset = ctx->current_file_offset_kb;
+            esp_err_t err = text_viewer_load_window(ctx, first_offset, next_offset);
+            if (err == ESP_OK) {
+                ctx->lasf_file_offset_kb = first_offset;
+                ctx->current_file_offset_kb = next_offset;
+                ctx->at_top_edge = false;
+            } else {
+                ESP_LOGE(TAG, "Failed to load next chunk: %s", esp_err_to_name(err));
+            }
+        }
     } else if (!at_bottom) {
         ctx->at_bottom_edge = false;
     }

@@ -9,8 +9,6 @@
 
 #include "esp_log.h"
 
-#define READ_CHUNK_SIZE_B (1 * 1024)
-
 static const char *TAG = "fs_text";
 
 /**
