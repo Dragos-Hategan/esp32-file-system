@@ -13,7 +13,8 @@
 /**
  * @brief Runtime state for the singleton text viewer/editor screen.
  */
-typedef struct {
+typedef struct
+{
     bool active;                        /**< True while the viewer screen is active */
     bool dirty;                         /**< True if current text differs from original */
     bool editable;                      /**< True if edit mode is enabled */
@@ -46,7 +47,8 @@ typedef struct {
 /**
  * @brief Confirmation actions used in the save/discard dialog.
  */
-typedef enum {
+typedef enum
+{
     TEXT_VIEWER_CONFIRM_SAVE = 1,    /**< Confirm saving changes */
     TEXT_VIEWER_CONFIRM_DISCARD = 2, /**< Confirm discarding changes */
 } text_viewer_confirm_action_t;
@@ -115,7 +117,6 @@ static void text_viewer_update_buttons(text_viewer_ctx_t *ctx);
 
 /*********************************************************************************************/
 
-
 /******************************* Keyboard & interaction helpers ******************************/
 
 /**
@@ -175,7 +176,6 @@ static void text_viewer_on_keyboard_ready(lv_event_t *e);
 static void text_viewer_on_screen_clicked(lv_event_t *e);
 
 /*********************************************************************************************/
-
 
 /************************************** Editing workflow *************************************/
 
@@ -265,7 +265,6 @@ static void text_viewer_on_name_dialog(lv_event_t *e);
 
 /*********************************************************************************************/
 
-
 /************************************ Confirmation dialog ************************************/
 
 /**
@@ -313,39 +312,49 @@ static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed);
 
 esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
 {
-    if (!opts || !opts->return_screen) {
+    if (!opts || !opts->return_screen)
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
     bool new_file = !opts->path || opts->path[0] == '\0';
-    if (!new_file && !opts->path) {
+    if (!new_file && !opts->path)
+    {
         return ESP_ERR_INVALID_ARG;
     }
-    if (new_file && (!opts->directory || opts->directory[0] == '\0')) {
+    if (new_file && (!opts->directory || opts->directory[0] == '\0'))
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
     char *content = NULL;
     size_t file_size_kb = 0;
-    if (new_file) {
+    if (new_file)
+    {
         content = strdup("");
-        if (!content) {
+        if (!content)
+        {
             return ESP_ERR_NO_MEM;
         }
-    } else {
+    }
+    else
+    {
         size_t len = 0;
         struct stat st = {0};
-        if (stat(opts->path, &st) == 0 && S_ISREG(st.st_mode)) {
+        if (stat(opts->path, &st) == 0 && S_ISREG(st.st_mode))
+        {
             file_size_kb = (st.st_size > 0) ? ((size_t)st.st_size - 1u) / 1024u : 0;
         }
         esp_err_t err = fs_text_read_range(opts->path, 0, &content, &len);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             return err;
         }
     }
 
     text_viewer_ctx_t *ctx = &s_viewer;
-    if (!ctx->screen) {
+    if (!ctx->screen)
+    {
         text_viewer_build_screen(ctx);
     }
 
@@ -368,12 +377,15 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     ctx->at_top_edge = false;
     ctx->at_bottom_edge = false;
 
-    if (new_file) {
+    if (new_file)
+    {
         ctx->path[0] = '\0';
         strlcpy(ctx->directory, opts->directory, sizeof(ctx->directory));
         strlcpy(ctx->pending_name, ".txt", sizeof(ctx->pending_name));
         lv_label_set_text(ctx->path_label, "");
-    } else {
+    }
+    else
+    {
         ctx->directory[0] = '\0';
         ctx->pending_name[0] = '\0';
         strlcpy(ctx->path, opts->path, sizeof(ctx->path));
@@ -384,14 +396,18 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
     text_viewer_set_original(ctx, content);
     free(content);
     ctx->suppress_events = false;
-    if (ctx->new_file) {
+    if (ctx->new_file)
+    {
         text_viewer_set_status(ctx, "New TXT");
-    } else {
+    }
+    else
+    {
         text_viewer_set_status(ctx, ctx->editable ? "Edit mode" : "View mode");
     }
     text_viewer_apply_mode(ctx);
     lv_screen_load(ctx->screen);
-    if (ctx->new_file) {
+    if (ctx->new_file)
+    {
         lv_textarea_set_cursor_pos(ctx->text_area, 0);
         lv_obj_add_state(ctx->text_area, LV_STATE_FOCUSED);
         text_viewer_show_keyboard(ctx, ctx->text_area);
@@ -460,14 +476,17 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
 
 static void text_viewer_apply_mode(text_viewer_ctx_t *ctx)
 {
-    if (ctx->editable) {
+    if (ctx->editable)
+    {
         lv_obj_clear_state(ctx->text_area, LV_STATE_DISABLED);
         lv_textarea_set_cursor_click_pos(ctx->text_area, true);
         lv_obj_add_flag(ctx->text_area, LV_OBJ_FLAG_CLICK_FOCUSABLE);
         text_viewer_hide_keyboard(ctx);
         lv_obj_clear_flag(ctx->save_btn, LV_OBJ_FLAG_HIDDEN);
         lv_textarea_set_cursor_pos(ctx->text_area, 0);
-    } else {
+    }
+    else
+    {
         lv_textarea_set_cursor_click_pos(ctx->text_area, false);
         lv_obj_clear_flag(ctx->text_area, LV_OBJ_FLAG_CLICK_FOCUSABLE);
         text_viewer_hide_keyboard(ctx);
@@ -480,7 +499,8 @@ static void text_viewer_apply_mode(text_viewer_ctx_t *ctx)
 
 static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg)
 {
-    if (ctx->status_label && msg) {
+    if (ctx->status_label && msg)
+    {
         lv_label_set_text(ctx->status_label, msg);
     }
 }
@@ -493,7 +513,8 @@ static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text)
 
 static esp_err_t text_viewer_load_window(text_viewer_ctx_t *ctx, size_t first_offset_kb, size_t second_offset_kb)
 {
-    if (!ctx || ctx->path[0] == '\0') {
+    if (!ctx || ctx->path[0] == '\0')
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -504,28 +525,34 @@ static esp_err_t text_viewer_load_window(text_viewer_ctx_t *ctx, size_t first_of
     size_t len_b = 0;
 
     esp_err_t err = fs_text_read_range(ctx->path, first_offset_kb, &chunk_a, &len_a);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         goto cleanup;
     }
 
-    if (second_offset_kb != first_offset_kb) {
+    if (second_offset_kb != first_offset_kb)
+    {
         err = fs_text_read_range(ctx->path, second_offset_kb, &chunk_b, &len_b);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             goto cleanup;
         }
     }
 
     size_t total = len_a + len_b;
     joined = (char *)malloc(total + 1);
-    if (!joined) {
+    if (!joined)
+    {
         err = ESP_ERR_NO_MEM;
         goto cleanup;
     }
 
-    if (len_a) {
+    if (len_a)
+    {
         memcpy(joined, chunk_a, len_a);
     }
-    if (len_b) {
+    if (len_b)
+    {
         memcpy(joined + len_a, chunk_b, len_b);
     }
     joined[total] = '\0';
@@ -533,7 +560,7 @@ static esp_err_t text_viewer_load_window(text_viewer_ctx_t *ctx, size_t first_of
     bool prev_suppress = ctx->suppress_events;
     ctx->suppress_events = true;
     lv_textarea_set_text(ctx->text_area, joined);
-    lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)len_a);
+
     ctx->suppress_events = prev_suppress;
 
 cleanup:
@@ -545,24 +572,32 @@ cleanup:
 
 static void text_viewer_update_buttons(text_viewer_ctx_t *ctx)
 {
-    if (!ctx->editable) {
+    if (!ctx->editable)
+    {
         return;
     }
-    if (ctx->dirty) {
+    if (ctx->dirty)
+    {
         lv_obj_clear_state(ctx->save_btn, LV_STATE_DISABLED);
-    } else {
+    }
+    else
+    {
         lv_obj_add_state(ctx->save_btn, LV_STATE_DISABLED);
     }
 }
 
 static void text_viewer_show_keyboard(text_viewer_ctx_t *ctx, lv_obj_t *target)
 {
-    if (!ctx || !ctx->editable) {
+    if (!ctx || !ctx->editable)
+    {
         return;
     }
-    if (target) {
+    if (target)
+    {
         lv_keyboard_set_textarea(ctx->keyboard, target);
-    } else if (!lv_keyboard_get_textarea(ctx->keyboard)) {
+    }
+    else if (!lv_keyboard_get_textarea(ctx->keyboard))
+    {
         lv_keyboard_set_textarea(ctx->keyboard, ctx->text_area);
     }
     lv_obj_clear_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
@@ -570,13 +605,16 @@ static void text_viewer_show_keyboard(text_viewer_ctx_t *ctx, lv_obj_t *target)
 
 static void text_viewer_hide_keyboard(text_viewer_ctx_t *ctx)
 {
-    if (!ctx) {
+    if (!ctx)
+    {
         return;
     }
-    if (!lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN)) {
+    if (!lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN))
+    {
         lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
     }
-    if (lv_keyboard_get_textarea(ctx->keyboard)) {
+    if (lv_keyboard_get_textarea(ctx->keyboard))
+    {
         lv_keyboard_set_textarea(ctx->keyboard, NULL);
     }
 }
@@ -584,59 +622,94 @@ static void text_viewer_hide_keyboard(text_viewer_ctx_t *ctx)
 static void text_viewer_on_text_area_clicked(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->editable) {
+    if (!ctx || !ctx->editable)
+    {
         return;
     }
     text_viewer_show_keyboard(ctx, ctx->text_area);
 }
 
+static void text_viewer_skip_cursor_animation(text_viewer_ctx_t *ctx)
+{
+    // Jump to the new cursor position immediately (skip the default scroll animation)
+    lv_point_t target_scroll = {0};
+    lv_obj_get_scroll_end(ctx->text_area, &target_scroll);
+    lv_obj_scroll_to(ctx->text_area, target_scroll.x, target_scroll.y, LV_ANIM_OFF);    
+}
+
 static void text_viewer_on_text_scrolled(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx) {
+    if (!ctx)
+    {
         return;
     }
 
     bool at_top = lv_obj_get_scroll_top(ctx->text_area) <= 0;
     bool at_bottom = lv_obj_get_scroll_bottom(ctx->text_area) <= 0;
 
-    if (at_top && !ctx->at_top_edge) {
+    if (at_top && !ctx->at_top_edge)
+    {
         ESP_LOGW(TAG, "Reached start of text area");
         ctx->at_top_edge = true;
 
-        if (!ctx->new_file && ctx->lasf_file_offset_kb > 0) {
+        if (!ctx->new_file && ctx->lasf_file_offset_kb > 0)
+        {
             size_t new_first = ctx->lasf_file_offset_kb - 1;
             size_t new_second = ctx->lasf_file_offset_kb;
             esp_err_t err = text_viewer_load_window(ctx, new_first, new_second);
-            if (err == ESP_OK) {
+            if (err == ESP_OK)
+            {
+                lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B + lv_obj_get_content_height(ctx->text_area));
+                text_viewer_skip_cursor_animation(ctx);
+
                 ctx->lasf_file_offset_kb = new_first;
                 ctx->current_file_offset_kb = new_second;
                 ctx->at_bottom_edge = false;
-            } else {
+            }
+            else
+            {
                 ESP_LOGE(TAG, "Failed to load previous chunk: %s", esp_err_to_name(err));
             }
         }
-    } else if (!at_top) {
+    }
+    else if (!at_top)
+    {
         ctx->at_top_edge = false;
     }
 
-    if (at_bottom && !ctx->at_bottom_edge) {
+    if (at_bottom && !ctx->at_bottom_edge)
+    {
         ESP_LOGW(TAG, "Reached end of text area");
         ctx->at_bottom_edge = true;
 
-        if (!ctx->new_file && ctx->current_file_offset_kb < ctx->max_file_offset_kb) {
+        if (!ctx->new_file && ctx->current_file_offset_kb < ctx->max_file_offset_kb)
+        {
             size_t next_offset = ctx->current_file_offset_kb + 1;
             size_t first_offset = ctx->current_file_offset_kb;
             esp_err_t err = text_viewer_load_window(ctx, first_offset, next_offset);
-            if (err == ESP_OK) {
+            if (err == ESP_OK)
+            {
+                if (first_offset == 0 && next_offset == 1){
+                    lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B);
+                }else{
+                    lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B - lv_obj_get_content_height(ctx->text_area));
+                }
+
+                text_viewer_skip_cursor_animation(ctx);           
+
                 ctx->lasf_file_offset_kb = first_offset;
                 ctx->current_file_offset_kb = next_offset;
                 ctx->at_top_edge = false;
-            } else {
+            }
+            else
+            {
                 ESP_LOGE(TAG, "Failed to load next chunk: %s", esp_err_to_name(err));
             }
         }
-    } else if (!at_bottom) {
+    }
+    else if (!at_bottom)
+    {
         ctx->at_bottom_edge = false;
     }
 }
@@ -644,7 +717,8 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
 static void text_viewer_on_keyboard_cancel(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx) {
+    if (!ctx)
+    {
         return;
     }
     text_viewer_hide_keyboard(ctx);
@@ -653,7 +727,8 @@ static void text_viewer_on_keyboard_cancel(lv_event_t *e)
 static void text_viewer_on_name_textarea_clicked(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->name_textarea) {
+    if (!ctx || !ctx->name_textarea)
+    {
         return;
     }
     text_viewer_show_keyboard(ctx, ctx->name_textarea);
@@ -662,7 +737,8 @@ static void text_viewer_on_name_textarea_clicked(lv_event_t *e)
 static void text_viewer_on_keyboard_ready(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->editable) {
+    if (!ctx || !ctx->editable)
+    {
         return;
     }
     text_viewer_handle_save(ctx);
@@ -671,18 +747,22 @@ static void text_viewer_on_keyboard_ready(lv_event_t *e)
 static void text_viewer_on_screen_clicked(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->editable) {
+    if (!ctx || !ctx->editable)
+    {
         return;
     }
-    if (ctx->name_dialog) {
+    if (ctx->name_dialog)
+    {
         return;
     }
-    if (lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN)) {
+    if (lv_obj_has_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN))
+    {
         return;
     }
     lv_obj_t *target = lv_event_get_target(e);
     if (text_viewer_target_in(ctx->text_area, target) ||
-        text_viewer_target_in(ctx->keyboard, target)) {
+        text_viewer_target_in(ctx->keyboard, target))
+    {
         return;
     }
     text_viewer_hide_keyboard(ctx);
@@ -691,13 +771,15 @@ static void text_viewer_on_screen_clicked(lv_event_t *e)
 static void text_viewer_on_text_changed(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->editable || ctx->suppress_events) {
+    if (!ctx || !ctx->editable || ctx->suppress_events)
+    {
         return;
     }
     const char *text = lv_textarea_get_text(ctx->text_area);
     const char *orig = ctx->original_text ? ctx->original_text : "";
     bool dirty = strcmp(text, orig) != 0;
-    if (dirty != ctx->dirty) {
+    if (dirty != ctx->dirty)
+    {
         ctx->dirty = dirty;
         text_viewer_update_buttons(ctx);
         text_viewer_set_status(ctx, dirty ? "Modified" : "Saved");
@@ -706,27 +788,32 @@ static void text_viewer_on_text_changed(lv_event_t *e)
 
 static void text_viewer_handle_save(text_viewer_ctx_t *ctx)
 {
-    if (!ctx) {
+    if (!ctx)
+    {
         return;
     }
-    if (ctx->new_file && ctx->path[0] == '\0') {
+    if (ctx->new_file && ctx->path[0] == '\0')
+    {
         text_viewer_show_name_dialog(ctx);
         return;
     }
 
     const char *text = lv_textarea_get_text(ctx->text_area);
-    if (!text) {
+    if (!text)
+    {
         text = "";
     }
 
-    if (ctx->path[0] == '\0') {
+    if (ctx->path[0] == '\0')
+    {
         text_viewer_set_status(ctx, "Missing file name");
         return;
     }
 
     const char *dest_path = ctx->path;
     esp_err_t err = fs_text_write(dest_path, text, strlen(text));
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         text_viewer_set_status(ctx, esp_err_to_name(err));
         ESP_LOGE(TAG, "Failed to save %s: %s", dest_path, esp_err_to_name(err));
         sdspi_schedule_sd_retry();
@@ -747,10 +834,12 @@ static void text_viewer_on_save(lv_event_t *e)
 static void text_viewer_on_back(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx) {
+    if (!ctx)
+    {
         return;
     }
-    if (ctx->editable && ctx->dirty) {
+    if (ctx->editable && ctx->dirty)
+    {
         text_viewer_show_confirm(ctx);
         return;
     }
@@ -761,15 +850,16 @@ static void text_viewer_on_back(lv_event_t *e)
 
 static bool text_viewer_validate_name(const char *name)
 {
-    if (!name || name[0] == '\0') {
+    if (!name || name[0] == '\0')
+    {
         return false;
     }
-    for (const char *p = name; *p; ++p) {
+    for (const char *p = name; *p; ++p)
+    {
         if (
-                *p == '\\' || *p == '/' || *p == ':' ||
-                *p == '*'  || *p == '?' || *p == '"' ||
-                *p == '<'  || *p == '>' || *p == '|'
-            ) 
+            *p == '\\' || *p == '/' || *p == ':' ||
+            *p == '*' || *p == '?' || *p == '"' ||
+            *p == '<' || *p == '>' || *p == '|')
         {
             return false;
         }
@@ -779,38 +869,48 @@ static bool text_viewer_validate_name(const char *name)
 
 static void text_viewer_ensure_txt_extension(char *name, size_t len)
 {
-    if (!name || len == 0) {
+    if (!name || len == 0)
+    {
         return;
     }
     size_t n = strlen(name);
-    if (n == 0) {
+    if (n == 0)
+    {
         strlcpy(name, ".txt", len);
         return;
     }
     const char *dot = strrchr(name, '.');
-    if (dot && dot[1] != '\0') {
-        if (strcasecmp(dot, ".txt") == 0) {
+    if (dot && dot[1] != '\0')
+    {
+        if (strcasecmp(dot, ".txt") == 0)
+        {
             return;
         }
         return;
     }
-    if (n + 4 >= len) {
+    if (n + 4 >= len)
+    {
         return;
     }
-    if (dot && dot[1] == '\0') {
+    if (dot && dot[1] == '\0')
+    {
         strlcpy(name + n, "txt", len - n);
-    } else {
+    }
+    else
+    {
         strlcat(name, ".txt", len);
     }
 }
 
 static esp_err_t text_viewer_compose_new_path(text_viewer_ctx_t *ctx, const char *name, char *out, size_t out_len)
 {
-    if (!ctx || !name || !out || out_len == 0 || ctx->directory[0] == '\0') {
+    if (!ctx || !name || !out || out_len == 0 || ctx->directory[0] == '\0')
+    {
         return ESP_ERR_INVALID_ARG;
     }
     int needed = snprintf(out, out_len, "%s/%s", ctx->directory, name);
-    if (needed < 0 || needed >= (int)out_len) {
+    if (needed < 0 || needed >= (int)out_len)
+    {
         return ESP_ERR_INVALID_SIZE;
     }
     return ESP_OK;
@@ -818,7 +918,8 @@ static esp_err_t text_viewer_compose_new_path(text_viewer_ctx_t *ctx, const char
 
 static bool text_viewer_path_exists(const char *path)
 {
-    if (!path || path[0] == '\0') {
+    if (!path || path[0] == '\0')
+    {
         return false;
     }
     struct stat st = {0};
@@ -827,7 +928,8 @@ static bool text_viewer_path_exists(const char *path)
 
 static void text_viewer_show_name_dialog(text_viewer_ctx_t *ctx)
 {
-    if (!ctx || !ctx->new_file || !ctx->editable || ctx->name_dialog) {
+    if (!ctx || !ctx->new_file || !ctx->editable || ctx->name_dialog)
+    {
         return;
     }
     lv_obj_t *dlg = lv_msgbox_create(ctx->screen);
@@ -870,9 +972,11 @@ static void text_viewer_show_name_dialog(text_viewer_ctx_t *ctx)
     lv_coord_t keyboard_top = lv_obj_get_y(ctx->keyboard);
     lv_coord_t dialog_h = lv_obj_get_height(dlg);
     lv_coord_t margin = 10;
-    if (keyboard_top > dialog_h) {
+    if (keyboard_top > dialog_h)
+    {
         lv_coord_t candidate = (keyboard_top - dialog_h) / 2;
-        if (candidate > 0) {
+        if (candidate > 0)
+        {
             margin = candidate;
         }
     }
@@ -881,12 +985,15 @@ static void text_viewer_show_name_dialog(text_viewer_ctx_t *ctx)
 
 static void text_viewer_close_name_dialog(text_viewer_ctx_t *ctx)
 {
-    if (!ctx || !ctx->name_dialog) {
+    if (!ctx || !ctx->name_dialog)
+    {
         return;
     }
-    if (ctx->name_textarea) {
+    if (ctx->name_textarea)
+    {
         const char *current = lv_textarea_get_text(ctx->name_textarea);
-        if (current) {
+        if (current)
+        {
             strlcpy(ctx->pending_name, current, sizeof(ctx->pending_name));
         }
     }
@@ -901,11 +1008,13 @@ static void text_viewer_close_name_dialog(text_viewer_ctx_t *ctx)
 static void text_viewer_on_name_dialog(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->name_dialog) {
+    if (!ctx || !ctx->name_dialog)
+    {
         return;
     }
     bool confirm = (bool)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-    if (!confirm) {
+    if (!confirm)
+    {
         text_viewer_close_name_dialog(ctx);
         return;
     }
@@ -914,16 +1023,19 @@ static void text_viewer_on_name_dialog(lv_event_t *e)
     char name_buf[FS_NAV_MAX_NAME];
     strlcpy(name_buf, raw ? raw : "", sizeof(name_buf));
     text_viewer_ensure_txt_extension(name_buf, sizeof(name_buf));
-    if (!text_viewer_validate_name(name_buf)) {
+    if (!text_viewer_validate_name(name_buf))
+    {
         text_viewer_set_status(ctx, "Invalid .txt name");
         return;
     }
     esp_err_t compose_err = text_viewer_compose_new_path(ctx, name_buf, ctx->path, sizeof(ctx->path));
-    if (compose_err != ESP_OK) {
+    if (compose_err != ESP_OK)
+    {
         text_viewer_set_status(ctx, "Path too long");
         return;
     }
-    if (text_viewer_path_exists(ctx->path)) {
+    if (text_viewer_path_exists(ctx->path))
+    {
         text_viewer_set_status(ctx, "File already exists");
         return;
     }
@@ -938,7 +1050,8 @@ static void text_viewer_on_name_dialog(lv_event_t *e)
 
 static void text_viewer_show_confirm(text_viewer_ctx_t *ctx)
 {
-    if (ctx->confirm_mbox) {
+    if (ctx->confirm_mbox)
+    {
         return;
     }
     lv_obj_t *mbox = lv_msgbox_create(ctx->screen);
@@ -972,8 +1085,10 @@ static void text_viewer_show_confirm(text_viewer_ctx_t *ctx)
 
 static bool text_viewer_target_in(lv_obj_t *parent, lv_obj_t *target)
 {
-    while (target) {
-        if (target == parent) {
+    while (target)
+    {
+        if (target == parent)
+        {
             return true;
         }
         target = lv_obj_get_parent(target);
@@ -983,7 +1098,8 @@ static bool text_viewer_target_in(lv_obj_t *parent, lv_obj_t *target)
 
 static void text_viewer_close_confirm(text_viewer_ctx_t *ctx)
 {
-    if (ctx->confirm_mbox) {
+    if (ctx->confirm_mbox)
+    {
         lv_msgbox_close(ctx->confirm_mbox);
         ctx->confirm_mbox = NULL;
     }
@@ -992,14 +1108,18 @@ static void text_viewer_close_confirm(text_viewer_ctx_t *ctx)
 static void text_viewer_on_confirm(lv_event_t *e)
 {
     text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx) {
+    if (!ctx)
+    {
         return;
     }
     void *ud = lv_obj_get_user_data(lv_event_get_target(e));
     text_viewer_close_confirm(ctx);
-    if (ud == (void *)TEXT_VIEWER_CONFIRM_SAVE) {
+    if (ud == (void *)TEXT_VIEWER_CONFIRM_SAVE)
+    {
         text_viewer_handle_save(ctx);
-    } else if (ud == (void *)TEXT_VIEWER_CONFIRM_DISCARD) {
+    }
+    else if (ud == (void *)TEXT_VIEWER_CONFIRM_DISCARD)
+    {
         text_viewer_close(ctx, false);
     }
 }
@@ -1019,11 +1139,12 @@ static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed)
     lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
     free(ctx->original_text);
     ctx->original_text = NULL;
-    if (ctx->return_screen) {
+    if (ctx->return_screen)
+    {
         lv_screen_load(ctx->return_screen);
     }
-    if (ctx->close_cb) {
+    if (ctx->close_cb)
+    {
         ctx->close_cb(changed, ctx->close_ctx);
     }
 }
-
