@@ -312,7 +312,7 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
         }
     } else {
         size_t len = 0;
-        esp_err_t err = fs_text_read(opts->path, &content, &len);
+        esp_err_t err = fs_text_read_range(opts->path, 0, &content, &len);
         if (err != ESP_OK) {
             return err;
         }

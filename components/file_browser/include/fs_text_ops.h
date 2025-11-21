@@ -38,6 +38,8 @@ bool fs_text_is_txt(const char *name);
  */
 esp_err_t fs_text_create(const char *path);
 
+esp_err_t fs_text_read_range(const char *path, size_t offset_kb, char **out_buf, size_t *out_len);
+
 /**
  * @brief Read a text file into a newly-allocated buffer.
  *

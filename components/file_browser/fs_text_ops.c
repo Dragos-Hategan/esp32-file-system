@@ -9,6 +9,8 @@
 
 #include "esp_log.h"
 
+#define READ_CHUNK_SIZE_B (1 * 1024)
+
 static const char *TAG = "fs_text";
 
 /**
@@ -80,6 +82,78 @@ esp_err_t fs_text_create(const char *path)
         return ESP_FAIL;
     }
     fclose(f);
+    return ESP_OK;
+}
+
+esp_err_t fs_text_read_range(const char *path, size_t offset_kb, char **out_buf, size_t *out_len)
+{
+    if (!out_buf || !fs_text_check_path(path)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    struct stat st = {0};
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        ESP_LOGE(TAG, "stat(%s) failed (errno=%d)", path, errno);
+        return ESP_FAIL;
+    }
+
+    if (offset_kb > SIZE_MAX / 1024) {
+        return ESP_ERR_INVALID_ARG; 
+    }
+    size_t offset_bytes = offset_kb * 1024u;
+
+    size_t file_size = (size_t)st.st_size;
+    size_t file_size_kb = file_size / 1024;
+    if (offset_bytes >= file_size) {
+        offset_bytes = file_size_kb * 1024;
+    }
+
+    size_t max_available = file_size - offset_bytes;
+    size_t to_read = READ_CHUNK_SIZE_B;
+    if (to_read > max_available) {
+        to_read = max_available; 
+    }
+
+#ifdef FS_TEXT_MAX_BYTES
+    if (to_read > FS_TEXT_MAX_BYTES) {
+        ESP_LOGE(TAG, "Requested range too large (%zu bytes)", to_read);
+        return ESP_ERR_INVALID_SIZE;
+    }
+#endif
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "fopen(%s) failed (errno=%d)", path, errno);
+        return ESP_FAIL;
+    }
+
+    if (fseek(f, (long)offset_bytes, SEEK_SET) != 0) {
+        ESP_LOGE(TAG, "fseek(%s, %zu) failed (errno=%d)", path, offset_bytes, errno);
+        fclose(f);
+        return ESP_FAIL;
+    }
+
+    char *buf = (char *)malloc(to_read + 1);
+    if (!buf) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t read = fread(buf, 1, to_read, f);
+    if (read == 0 && ferror(f)) {
+        ESP_LOGE(TAG, "fread(%s) failed (errno=%d)", path, errno);
+        free(buf);
+        fclose(f);
+        return ESP_FAIL;
+    }
+    buf[read] = '\0';
+
+    fclose(f);
+    *out_buf = buf;
+    if (out_len) {
+        *out_len = read;
+    }
+
     return ESP_OK;
 }
 
