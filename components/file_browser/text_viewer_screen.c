@@ -1168,6 +1168,19 @@ static void text_viewer_handle_save(text_viewer_ctx_t *ctx)
         }
     }
 
+    size_t new_size = prefix_size + text_len + suffix_size;
+    ctx->max_file_offset_kb = (new_size > 0) ? ((new_size - 1u) / 1024u) : 0u;
+    if (ctx->lasf_file_offset_kb > ctx->max_file_offset_kb)
+    {
+        ctx->lasf_file_offset_kb = ctx->max_file_offset_kb;
+    }
+    if (ctx->current_file_offset_kb > ctx->max_file_offset_kb)
+    {
+        ctx->current_file_offset_kb = ctx->max_file_offset_kb;
+    }
+    ctx->at_top_edge = false;
+    ctx->at_bottom_edge = false;
+
     text_viewer_set_original(ctx, text);
     ctx->dirty = false;
     text_viewer_set_status(ctx, "Saved");
