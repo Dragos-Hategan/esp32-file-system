@@ -27,6 +27,8 @@
 #define FILE_BROWSER_WAIT_STACK   (6 * 1024)
 #define FILE_BROWSER_WAIT_PRIO    (4)
 
+static bool file_browser_is_image(const char *name);
+
 typedef struct {
     bool active;
     bool is_dir;
@@ -796,9 +798,11 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
         char text[FS_NAV_MAX_NAME + 48];
         snprintf(text, sizeof(text), "%s\n%s", entry->name, meta);
 
-        lv_obj_t *btn = lv_list_add_btn(ctx->list,
-                                        entry->is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE,
-                                        text);
+        const char *icon = entry->is_dir
+                               ? LV_SYMBOL_DIRECTORY
+                               : (file_browser_is_image(entry->name) ? LV_SYMBOL_IMAGE : LV_SYMBOL_FILE);
+
+        lv_obj_t *btn = lv_list_add_btn(ctx->list, icon, text);
         lv_obj_set_user_data(btn, (void *)(uintptr_t)i);
         lv_obj_add_event_cb(btn, file_browser_on_entry_click, LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(btn, file_browser_on_entry_long_press, LV_EVENT_LONG_PRESSED, ctx);
@@ -819,6 +823,23 @@ static void file_browser_format_size(size_t bytes, char *out, size_t out_len)
     } else {
         snprintf(out, out_len, "%.1f %s", value, suffixes[idx]);
     }
+}
+
+/**
+ * @brief Basic image-type detection for choosing an icon.
+ */
+static bool file_browser_is_image(const char *name)
+{
+    const char *dot = strrchr(name, '.');
+    if (!dot) {
+        return false;
+    }
+
+    return strcasecmp(dot, ".png") == 0 ||
+           strcasecmp(dot, ".jpg") == 0 ||
+           strcasecmp(dot, ".jpeg") == 0 ||
+           strcasecmp(dot, ".bmp") == 0 ||
+           strcasecmp(dot, ".gif") == 0;
 }
 
 static esp_err_t file_browser_reload(void)

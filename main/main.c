@@ -9,6 +9,7 @@
 #include "touch_xpt2046.h"
 #include "file_browser.h"
 #include "sd_card.h"
+#include "Domine_14.h"
 
 static char *TAG = "app_main";
 
@@ -59,6 +60,32 @@ static esp_err_t init_nvs(void)
     return nvs_err;
 }
 
+/**
+ * @brief Apply the Domine 14 font as the app-wide default LVGL theme font.
+ */
+static void apply_default_font_theme(void)
+{
+    lv_display_t *disp = lv_display_get_default();
+    if (!disp) {
+        ESP_LOGW(TAG, "No LVGL display available; cannot set theme font");
+        return;
+    }
+
+    lv_theme_t *theme = lv_theme_default_init(
+        disp,
+        lv_palette_main(LV_PALETTE_BLUE),
+        lv_palette_main(LV_PALETTE_RED),
+        false,
+        &Domine_14);
+
+    if (!theme) {
+        ESP_LOGW(TAG, "Failed to init LVGL default theme with Domine_14");
+        return;
+    }
+
+    lv_display_set_theme(disp, theme);
+}
+
 static void main_task(void *arg)
 {
     ESP_LOGI(TAG, "\n\n ********** LVGL File Display ********** \n");
@@ -70,6 +97,7 @@ static void main_task(void *arg)
     ESP_LOGI(TAG, "Starting bsp for ILI9341 display");
     ESP_ERROR_CHECK(bsp_display_start_result()); 
     ESP_ERROR_CHECK(bsp_display_backlight_on()); 
+    apply_default_font_theme();
     freeStack[1] = uxTaskGetStackHighWaterMark(NULL);
 
     /* ----- Init NVS ----- */
