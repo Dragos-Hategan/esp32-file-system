@@ -36,6 +36,7 @@ typedef struct
     lv_obj_t *keyboard;                 /**< On-screen keyboard */
     lv_obj_t *return_screen;            /**< Screen to return to on close */
     lv_obj_t *confirm_mbox;             /**< Confirmation message box (save/discard) */
+    lv_obj_t *chunk_mbox;               /**< Chunk-change confirmation message box */
     lv_obj_t *name_dialog;              /**< Filename prompt dialog */
     lv_obj_t *name_textarea;            /**< Text area used inside filename dialog */
     text_viewer_close_cb_t close_cb;    /**< Optional close callback */
@@ -44,6 +45,10 @@ typedef struct
     char directory[FS_TEXT_MAX_PATH];   /**< Directory used for new files */
     char pending_name[FS_NAV_MAX_NAME]; /**< Suggested filename for new files */
     char *original_text;                /**< Snapshot of text at load/save time */
+    size_t pending_first_offset_kb;     /**< Pending first chunk offset when prompting */
+    size_t pending_second_offset_kb;    /**< Pending second chunk offset when prompting */
+    bool pending_scroll_up;             /**< True if pending load comes from top edge */
+    bool pending_chunk;                 /**< True if a chunk load is pending confirmation */
 } text_viewer_ctx_t;
 
 /**
@@ -54,6 +59,15 @@ typedef enum
     TEXT_VIEWER_CONFIRM_SAVE = 1,    /**< Confirm saving changes */
     TEXT_VIEWER_CONFIRM_DISCARD = 2, /**< Confirm discarding changes */
 } text_viewer_confirm_action_t;
+
+/**
+ * @brief Actions in the chunk-change prompt.
+ */
+typedef enum
+{
+    TEXT_VIEWER_CHUNK_SAVE = 1,    /**< Save before loading new chunk */
+    TEXT_VIEWER_CHUNK_DISCARD = 2, /**< Discard changes and load new chunk */
+} text_viewer_chunk_action_t;
 
 static const char *TAG = "text_viewer";
 
@@ -267,6 +281,44 @@ static void text_viewer_on_save(lv_event_t *e);
  */
 static void text_viewer_on_back(lv_event_t *e);
 
+/**
+ * @brief Show prompt before changing chunk when dirty.
+ *
+ * @param ctx Viewer context.
+ */
+static void text_viewer_show_chunk_prompt(text_viewer_ctx_t *ctx);
+
+/**
+ * @brief Close chunk-change prompt if present.
+ *
+ * @param ctx Viewer context.
+ */
+static void text_viewer_close_chunk_prompt(text_viewer_ctx_t *ctx);
+
+/**
+ * @brief Handle chunk-change prompt buttons.
+ *
+ * @param e LVGL event.
+ */
+static void text_viewer_on_chunk_prompt(lv_event_t *e);
+
+/**
+ * @brief Apply a pending chunk load after save/discard decision.
+ *
+ * @param ctx Viewer context.
+ */
+static void text_viewer_apply_pending_chunk(text_viewer_ctx_t *ctx);
+
+/**
+ * @brief Schedule loading a new chunk window (with optional prompt if dirty).
+ *
+ * @param ctx Viewer context.
+ * @param first_offset_kb First chunk offset to load.
+ * @param second_offset_kb Second chunk offset to load.
+ * @param from_top True if triggered from top edge scroll.
+ */
+static void text_viewer_request_chunk_load(text_viewer_ctx_t *ctx, size_t first_offset_kb, size_t second_offset_kb, bool from_top);
+
 /*********************************************************************************************/
 
 /**
@@ -470,8 +522,13 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
 
     ctx->name_dialog = NULL;
     ctx->name_textarea = NULL;
+    ctx->chunk_mbox = NULL;
     ctx->at_top_edge = false;
     ctx->at_bottom_edge = false;
+    ctx->pending_chunk = false;
+    ctx->pending_first_offset_kb = 0;
+    ctx->pending_second_offset_kb = 0;
+    ctx->pending_scroll_up = false;
 
     if (new_file)
     {
@@ -656,6 +713,9 @@ static esp_err_t text_viewer_load_window(text_viewer_ctx_t *ctx, size_t first_of
     bool prev_suppress = ctx->suppress_events;
     ctx->suppress_events = true;
     lv_textarea_set_text(ctx->text_area, joined);
+    text_viewer_set_original(ctx, joined);
+    ctx->dirty = false;
+    text_viewer_update_buttons(ctx);
 
     ctx->suppress_events = prev_suppress;
 
@@ -740,6 +800,10 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
     {
         return;
     }
+    if (ctx->chunk_mbox || ctx->pending_chunk)
+    {
+        return;
+    }
 
     bool at_top = lv_obj_get_scroll_top(ctx->text_area) <= 0;
     bool at_bottom = lv_obj_get_scroll_bottom(ctx->text_area) <= 0;
@@ -752,20 +816,7 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
         {
             size_t new_first = ctx->lasf_file_offset_kb - 1;
             size_t new_second = ctx->lasf_file_offset_kb;
-            esp_err_t err = text_viewer_load_window(ctx, new_first, new_second);
-            if (err == ESP_OK)
-            {
-                lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B + lv_obj_get_content_height(ctx->text_area));
-                text_viewer_skip_cursor_animation(ctx);
-
-                ctx->lasf_file_offset_kb = new_first;
-                ctx->current_file_offset_kb = new_second;
-                ctx->at_bottom_edge = false;
-            }
-            else
-            {
-                ESP_LOGE(TAG, "Failed to load previous chunk: %s", esp_err_to_name(err));
-            }
+            text_viewer_request_chunk_load(ctx, new_first, new_second, true);
         }
     }
     else if (!at_top)
@@ -781,20 +832,7 @@ static void text_viewer_on_text_scrolled(lv_event_t *e)
         {
             size_t next_offset = ctx->current_file_offset_kb + 1;
             size_t first_offset = ctx->current_file_offset_kb;
-            esp_err_t err = text_viewer_load_window(ctx, first_offset, next_offset);
-            if (err == ESP_OK)
-            {
-                lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B - lv_obj_get_content_height(ctx->text_area));
-                text_viewer_skip_cursor_animation(ctx);           
-
-                ctx->lasf_file_offset_kb = first_offset;
-                ctx->current_file_offset_kb = next_offset;
-                ctx->at_top_edge = false;
-            }
-            else
-            {
-                ESP_LOGE(TAG, "Failed to load next chunk: %s", esp_err_to_name(err));
-            }
+            text_viewer_request_chunk_load(ctx, first_offset, next_offset, false);
         }
     }
     else if (!at_bottom)
@@ -1127,6 +1165,143 @@ static void text_viewer_on_back(lv_event_t *e)
     text_viewer_close(ctx, false);
 }
 
+static void text_viewer_show_chunk_prompt(text_viewer_ctx_t *ctx)
+{
+    if (!ctx || ctx->chunk_mbox || !ctx->pending_chunk)
+    {
+        return;
+    }
+    lv_obj_t *mbox = lv_msgbox_create(ctx->screen);
+    lv_obj_add_flag(mbox, LV_OBJ_FLAG_FLOATING);
+    ctx->chunk_mbox = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_set_width(mbox, LV_PCT(80));
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text(label, "Save changes before loading new text?");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *save_btn = lv_msgbox_add_footer_button(mbox, "Save");
+    lv_obj_set_user_data(save_btn, (void *)TEXT_VIEWER_CHUNK_SAVE);
+    lv_obj_set_flex_grow(save_btn, 1);
+    lv_obj_add_event_cb(save_btn, text_viewer_on_chunk_prompt, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *discard_btn = lv_msgbox_add_footer_button(mbox, "Discard");
+    lv_obj_set_user_data(discard_btn, (void *)TEXT_VIEWER_CHUNK_DISCARD);
+    lv_obj_set_flex_grow(discard_btn, 1);
+    lv_obj_add_event_cb(discard_btn, text_viewer_on_chunk_prompt, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *cancel_btn = lv_msgbox_add_footer_button(mbox, "Cancel");
+    lv_obj_set_user_data(cancel_btn, NULL);
+    lv_obj_set_flex_grow(cancel_btn, 1);
+    lv_obj_add_event_cb(cancel_btn, text_viewer_on_chunk_prompt, LV_EVENT_CLICKED, ctx);
+}
+
+static void text_viewer_close_chunk_prompt(text_viewer_ctx_t *ctx)
+{
+    if (ctx && ctx->chunk_mbox)
+    {
+        lv_msgbox_close(ctx->chunk_mbox);
+        ctx->chunk_mbox = NULL;
+    }
+}
+
+static void text_viewer_apply_pending_chunk(text_viewer_ctx_t *ctx)
+{
+    if (!ctx || !ctx->pending_chunk)
+    {
+        return;
+    }
+
+    esp_err_t err = text_viewer_load_window(ctx, ctx->pending_first_offset_kb, ctx->pending_second_offset_kb);
+    if (err == ESP_OK)
+    {
+        lv_coord_t content_h = lv_obj_get_content_height(ctx->text_area);
+        if (ctx->pending_scroll_up)
+        {
+            lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B + content_h);
+            text_viewer_skip_cursor_animation(ctx);
+            ctx->lasf_file_offset_kb = ctx->pending_first_offset_kb;
+            ctx->current_file_offset_kb = ctx->pending_second_offset_kb;
+            ctx->at_bottom_edge = false;
+        }
+        else
+        {
+            lv_textarea_set_cursor_pos(ctx->text_area, (int32_t)READ_CHUNK_SIZE_B - content_h);
+            text_viewer_skip_cursor_animation(ctx);
+            ctx->lasf_file_offset_kb = ctx->pending_first_offset_kb;
+            ctx->current_file_offset_kb = ctx->pending_second_offset_kb;
+            ctx->at_top_edge = false;
+        }
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to load chunk: %s", esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
+    }
+    ctx->pending_chunk = false;
+}
+
+static void text_viewer_on_chunk_prompt(lv_event_t *e)
+{
+    text_viewer_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx)
+    {
+        return;
+    }
+    void *ud = lv_obj_get_user_data(lv_event_get_target(e));
+    text_viewer_close_chunk_prompt(ctx);
+
+    if (ud == (void *)TEXT_VIEWER_CHUNK_SAVE)
+    {
+        text_viewer_handle_save(ctx);
+        if (!ctx->dirty)
+        {
+            text_viewer_apply_pending_chunk(ctx);
+        }
+        else
+        {
+            ctx->pending_chunk = false;
+        }
+    }
+    else if (ud == (void *)TEXT_VIEWER_CHUNK_DISCARD)
+    {
+        ctx->dirty = false;
+        text_viewer_update_buttons(ctx);
+        text_viewer_apply_pending_chunk(ctx);
+    }
+    else
+    {
+        ctx->pending_chunk = false; // Cancel
+    }
+}
+
+static void text_viewer_request_chunk_load(text_viewer_ctx_t *ctx, size_t first_offset_kb, size_t second_offset_kb, bool from_top)
+{
+    if (!ctx || ctx->chunk_mbox)
+    {
+        return;
+    }
+
+    ctx->pending_first_offset_kb = first_offset_kb;
+    ctx->pending_second_offset_kb = second_offset_kb;
+    ctx->pending_scroll_up = from_top;
+    ctx->pending_chunk = true;
+
+    if (ctx->dirty)
+    {
+        text_viewer_show_chunk_prompt(ctx);
+    }
+    else
+    {
+        text_viewer_apply_pending_chunk(ctx);
+    }
+}
+
+
 /************************************* New-file utilities *************************************/
 
 static bool text_viewer_validate_name(const char *name)
@@ -1408,6 +1583,7 @@ static void text_viewer_on_confirm(lv_event_t *e)
 static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed)
 {
     text_viewer_close_confirm(ctx);
+    text_viewer_close_chunk_prompt(ctx);
     text_viewer_close_name_dialog(ctx);
     ctx->active = false;
     ctx->editable = false;
@@ -1416,6 +1592,7 @@ static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed)
     ctx->new_file = false;
     ctx->directory[0] = '\0';
     ctx->pending_name[0] = '\0';
+    ctx->pending_chunk = false;
     lv_keyboard_set_textarea(ctx->keyboard, NULL);
     lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
     free(ctx->original_text);
