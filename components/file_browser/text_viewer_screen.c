@@ -1385,6 +1385,10 @@ static void text_viewer_on_sd_retry_timer(lv_timer_t *timer)
     if (action == TEXT_VIEWER_SD_SAVE)
     {
         text_viewer_handle_save(ctx);
+        if (ctx->pending_chunk && !ctx->dirty && !ctx->waiting_sd)
+        {
+            text_viewer_apply_pending_chunk(ctx);
+        }
     }
     else if (action == TEXT_VIEWER_SD_CHUNK)
     {
