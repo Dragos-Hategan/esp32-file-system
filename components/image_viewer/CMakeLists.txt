@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "jpg.c"
+        "jpg_handler.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_bsp_generic
+        esp_common
+        lvgl
+    PRIV_REQUIRES
+)

@@ -1,3 +1,2 @@
 dependencies:
-  lvgl/lvgl: ^9.1.0
   atanisoft/esp_lcd_touch_xpt2046: ^1.0.6

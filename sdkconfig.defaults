@@ -15,7 +15,8 @@ CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_OS_FREERTOS=y                           
-CONFIG_LV_USE_FREERTOS_TASK_NOTIFY=y              
+CONFIG_LV_USE_FREERTOS_TASK_NOTIFY=y       
+CONFIG_LV_DRAW_THREAD_STACK_SIZE=24576       
 
 # === LVGL – performance / rendering ===
 # 20 ms tick target (~50 Hz) [FPS CRITICAL]
@@ -24,6 +25,17 @@ CONFIG_LV_DEF_REFR_PERIOD=20
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2     
 # Hot code in IRAM (faster draw) [FPS CRITICAL]            
 CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y           
+
+# === LVGL - filesystem & image decoders ===
+# Use stdio VFS driver on top of /sdcard to avoid touching managed components
+CONFIG_LV_USE_FS_STDIO=y
+CONFIG_LV_FS_STDIO_LETTER=83
+CONFIG_LV_FS_STDIO_PATH="/sdcard"
+CONFIG_LV_FS_STDIO_CACHE_SIZE=1024
+CONFIG_LV_USE_FS_FATFS=n
+CONFIG_LV_USE_TJPGD=y
+CONFIG_LV_USE_BMP=y
+CONFIG_LV_USE_LODEPNG=y
 
 # === Display Interface (SPI) ===
 CONFIG_BSP_DISPLAY_ENABLED=y                      

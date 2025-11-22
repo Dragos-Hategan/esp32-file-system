@@ -5,6 +5,7 @@ idf_component_register(
         esp_bsp_generic 
         esp_common     
         lvgl
+        image_viewer
         sd_card
     PRIV_REQUIRES
         esp_driver_sdspi

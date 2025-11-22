@@ -15,10 +15,12 @@
 #include "lvgl.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 
 #include "fs_navigator.h"
 #include "fs_text_ops.h"
 #include "text_viewer_screen.h"
+#include "jpg.h"
 
 #define TAG "file_browser"
 
@@ -26,8 +28,6 @@
 
 #define FILE_BROWSER_WAIT_STACK   (6 * 1024)
 #define FILE_BROWSER_WAIT_PRIO    (4)
-
-static bool file_browser_is_image(const char *name);
 
 typedef struct {
     bool active;
@@ -67,6 +67,27 @@ typedef struct {
 
 static file_browser_ctx_t s_browser;
 static TaskHandle_t file_browser_wait_task = NULL;
+
+/***************************************** Image Helpers *****************************************/
+/**
+ * @brief Returns true if filename has a known image extension.
+ *
+ * Current formats: PNG/JPG/JPEG/BMP/GIF (case-insensitive).
+ */
+static bool file_browser_is_image(const char *name);
+
+/**
+ * @brief Returns true if filename ends in .jpg or .jpeg (case-insensitive).
+ */
+static bool file_browser_is_jpeg(const char *name);
+
+/**
+ * @brief Entry click handler for JPEG files (path composition + view stub).
+ *
+ * @param ctx   Active browser context.
+ * @param entry Navigator entry selected from the list.
+ */
+static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry);
 
 /************************************ UI & Data Refresh Helpers ***********************************/
 
@@ -842,6 +863,53 @@ static bool file_browser_is_image(const char *name)
            strcasecmp(dot, ".gif") == 0;
 }
 
+static bool file_browser_is_jpeg(const char *name)
+{
+    const char *dot = strrchr(name, '.');
+    if (!dot) {
+        return false;
+    }
+    return strcasecmp(dot, ".jpg") == 0 || strcasecmp(dot, ".jpeg") == 0;
+}
+
+static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
+{
+    if (!ctx || !entry) {
+        return;
+    }
+
+    char path[FS_NAV_MAX_PATH];
+    if (fs_nav_compose_path(&ctx->nav, entry->name, path, sizeof(path)) != ESP_OK) {
+        ESP_LOGE(TAG, "Path too long for \"%s\"", entry->name);
+        return;
+    }
+
+    const char *root = CONFIG_SDSPI_MOUNT_POINT;
+    size_t root_len = strlen(root);
+    const char *relative = path;
+    if (strncmp(path, root, root_len) == 0) {
+        relative = path + root_len; /* keep leading slash after mountpoint */
+    }
+
+    char lv_path[FS_NAV_MAX_PATH + 4];
+    int needed = snprintf(lv_path, sizeof(lv_path), "S:%s", relative);
+    if (needed < 0 || needed >= (int)sizeof(lv_path)) {
+        ESP_LOGE(TAG, "LVGL path too long for \"%s\"", entry->name);
+        return;
+    }
+
+    jpg_viewer_open_opts_t opts = {
+        .path = lv_path,
+        .return_screen = ctx->screen,
+    };
+
+    esp_err_t err = jpg_viewer_open(&opts);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open JPEG \"%s\": %s", path, esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
+    }
+}
+
 static esp_err_t file_browser_reload(void)
 {
     file_browser_ctx_t *ctx = &s_browser;
@@ -913,6 +981,11 @@ static void file_browser_on_entry_click(lv_event_t *e)
         } else {
             ESP_LOGE(TAG, "Path too long for \"%s\"", entry->name);
         }
+        return;
+    }
+
+    if (file_browser_is_jpeg(entry->name)) {
+        file_browser_handle_jpeg(ctx, entry);
         return;
     }
 
