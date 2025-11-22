@@ -772,7 +772,7 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
     lv_obj_clean(ctx->list);
 
     if (fs_nav_can_go_parent(&ctx->nav)) {
-        lv_obj_t *parent_btn = lv_list_add_btn(ctx->list, LV_SYMBOL_UP, "../ -> Parent Folder");
+        lv_obj_t *parent_btn = lv_list_add_btn(ctx->list, LV_SYMBOL_UP, "../ <- Parent Folder");
         lv_obj_add_event_cb(parent_btn, file_browser_on_parent_click, LV_EVENT_CLICKED, ctx);
     }
 

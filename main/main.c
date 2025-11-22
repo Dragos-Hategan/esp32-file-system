@@ -84,6 +84,14 @@ static void apply_default_font_theme(void)
     }
 
     lv_display_set_theme(disp, theme);
+
+    /* Ensure overlay/system layers also inherit the font (dialogs, prompts, etc.) */
+    lv_obj_t *act_scr = lv_display_get_screen_active(disp);
+    lv_obj_t *top_layer = lv_display_get_layer_top(disp);
+    lv_obj_t *sys_layer = lv_display_get_layer_sys(disp);
+    lv_obj_set_style_text_font(act_scr, &Domine_14, 0);
+    lv_obj_set_style_text_font(top_layer, &Domine_14, 0);
+    lv_obj_set_style_text_font(sys_layer, &Domine_14, 0);
 }
 
 static void main_task(void *arg)

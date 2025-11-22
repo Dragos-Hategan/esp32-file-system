@@ -18,6 +18,10 @@
     #include "lvgl/lvgl.h"
 #endif
 
+/* Use built-in Montserrat 14 as fallback to render LVGL symbols */
+#if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
+LV_FONT_DECLARE(lv_font_montserrat_14);
+#endif
 
 
 #ifndef DOMINE_14
