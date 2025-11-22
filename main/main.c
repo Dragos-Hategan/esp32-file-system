@@ -156,7 +156,7 @@ static void main_task(void *arg)
         printf("Free stack[%d]: %d words (%d bytes)\n", i, freeStack[i], freeStack[i] * sizeof(StackType_t));
     }
 
-    vTaskDelay(portMAX_DELAY);
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -168,7 +168,7 @@ void app_main(void)
         size_t min_free_heap = esp_get_minimum_free_heap_size();
         size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
  
-        printf("\rfree=%u  min=%u max=%u                 ", free_heap, min_free_heap, largest_block);
+        printf("free=%u  min=%u max=%u\n", free_heap, min_free_heap, largest_block);
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
