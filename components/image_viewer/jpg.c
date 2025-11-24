@@ -7,8 +7,6 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
-#include "jpg_handler.h"
-
 #define TAG "jpg_viewer"
 #define IMG_VIEWER_MAX_PATH 256
 
@@ -23,6 +21,72 @@ typedef struct {
 } jpg_viewer_ctx_t;
 
 static jpg_viewer_ctx_t s_jpg_viewer;
+
+/**
+ * @brief Set the LVGL image source to a JPEG on disk.
+ *
+ * Performs basic validation (non-empty path) before calling lv_image_set_src().
+ *
+ * @param img  LVGL image object (must be non-NULL).
+ * @param path Path to JPEG file (drive-prefixed if using LVGL FS, e.g. "S:/...").
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG on bad inputs.
+ */
+static esp_err_t jpg_handler_set_src(lv_obj_t *img, const char *path);
+
+static void jpg_viewer_reset(jpg_viewer_ctx_t *ctx);
+static void jpg_viewer_destroy_active(jpg_viewer_ctx_t *ctx);
+static void jpg_viewer_on_close(lv_event_t *e);
+static void jpg_viewer_build_ui(jpg_viewer_ctx_t *ctx, const char *path);
+
+esp_err_t jpg_viewer_open(const jpg_viewer_open_opts_t *opts)
+{
+    if (!opts || !opts->path || opts->path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    jpg_viewer_ctx_t *ctx = &s_jpg_viewer;
+
+    if (ctx->active) {
+        jpg_viewer_destroy_active(ctx);
+    }
+
+    ctx->return_screen = opts->return_screen;
+    strlcpy(ctx->path, opts->path, sizeof(ctx->path));
+
+    if (!bsp_display_lock(0)) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    ctx->previous_screen = lv_screen_active();
+    jpg_viewer_build_ui(ctx, opts->path);
+
+    esp_err_t err = jpg_handler_set_src(ctx->image, opts->path);
+    if (err != ESP_OK) {
+        lv_obj_del(ctx->screen);
+        ctx->screen = NULL;
+        bsp_display_unlock();
+        jpg_viewer_reset(ctx);
+        return err;
+    }
+
+    lv_obj_center(ctx->image);
+    lv_screen_load(ctx->screen);
+    bsp_display_unlock();
+
+    ctx->active = true;
+    return ESP_OK;
+}
+
+static esp_err_t jpg_handler_set_src(lv_obj_t *img, const char *path)
+{
+    if (!img || !path || path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    lv_image_set_src(img, path);
+
+    return ESP_OK;
+}
 
 static void jpg_viewer_reset(jpg_viewer_ctx_t *ctx)
 {
@@ -107,43 +171,4 @@ static void jpg_viewer_build_ui(jpg_viewer_ctx_t *ctx, const char *path)
 
     ctx->image = lv_image_create(ctx->screen);
     lv_obj_center(ctx->image);
-}
-
-esp_err_t jpg_viewer_open(const jpg_viewer_open_opts_t *opts)
-{
-    if (!opts || !opts->path || opts->path[0] == '\0') {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    jpg_viewer_ctx_t *ctx = &s_jpg_viewer;
-
-    if (ctx->active) {
-        jpg_viewer_destroy_active(ctx);
-    }
-
-    ctx->return_screen = opts->return_screen;
-    strlcpy(ctx->path, opts->path, sizeof(ctx->path));
-
-    if (!bsp_display_lock(0)) {
-        return ESP_ERR_TIMEOUT;
-    }
-
-    ctx->previous_screen = lv_screen_active();
-    jpg_viewer_build_ui(ctx, opts->path);
-
-    esp_err_t err = jpg_handler_set_src(ctx->image, opts->path);
-    if (err != ESP_OK) {
-        lv_obj_del(ctx->screen);
-        ctx->screen = NULL;
-        bsp_display_unlock();
-        jpg_viewer_reset(ctx);
-        return err;
-    }
-
-    lv_obj_center(ctx->image);
-    lv_screen_load(ctx->screen);
-    bsp_display_unlock();
-
-    ctx->active = true;
-    return ESP_OK;
 }
