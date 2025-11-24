@@ -573,7 +573,7 @@ static bool ui_yes_no_dialog(const char *question)
     lv_obj_align_to(loader_wrap, mbox1, LV_ALIGN_OUT_BOTTOM_MID, 0, 8);
 
     lv_obj_t *performing_label = lv_label_create(loader_wrap);
-    lv_label_set_text(performing_label, "Performing Calibration");
+    lv_label_set_text(performing_label, "Performing Calibration In:");
     lv_obj_set_style_text_align(performing_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(performing_label, lv_pct(100));
     lv_obj_align(performing_label, LV_ALIGN_TOP_MID, 0, 0);
@@ -589,7 +589,7 @@ static bool ui_yes_no_dialog(const char *question)
 
     lv_obj_t *countdown_label = lv_label_create(loading_arc);
     lv_obj_set_style_text_font(countdown_label, LV_FONT_DEFAULT, 0);
-    lv_label_set_text(countdown_label, "5");
+    lv_label_set_text(countdown_label, "10");
     lv_obj_center(countdown_label);
 
     lv_obj_invalidate(scr);
@@ -597,7 +597,7 @@ static bool ui_yes_no_dialog(const char *question)
 
     bsp_display_unlock();
 
-    const uint32_t countdown_ms = 5000;
+    const uint32_t countdown_ms = 10000;
     TickType_t start_ticks = xTaskGetTickCount();
     TickType_t timeout_ticks = pdMS_TO_TICKS(countdown_ms);
     int last_second_displayed = 5;
@@ -620,7 +620,7 @@ static bool ui_yes_no_dialog(const char *question)
             break;
         }
 
-        int seconds_left = 5 - (elapsed_ms / 1000);
+        int seconds_left = 10 - (elapsed_ms / 1000);
         if (seconds_left < 1)
         {
             seconds_left = 1;

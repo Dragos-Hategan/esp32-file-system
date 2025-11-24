@@ -913,7 +913,7 @@ static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry
 
     jpg_viewer_open_opts_t opts = {
         .path = lv_path,
-        .return_screen = ctx->screen,
+        .return_screen = ctx->screen
     };
 
     esp_err_t err = jpg_viewer_open(&opts);
