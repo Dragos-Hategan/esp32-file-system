@@ -294,6 +294,13 @@ static const led_indicator_config_t bsp_leds_config = {
 };
 #endif // CONFIG_BSP_LEDS_NUM > 0
 
+static esp_lcd_panel_handle_t s_panel_handle = NULL;
+
+esp_lcd_panel_handle_t bsp_display_get_panel(void)
+{
+    return s_panel_handle;
+}
+
 esp_err_t bsp_i2c_init(void)
 {
     /* I2C was initialized before */
@@ -560,19 +567,18 @@ err:
 static lv_display_t *bsp_display_lcd_init(void)
 {
     esp_lcd_panel_io_handle_t io_handle = NULL;
-    esp_lcd_panel_handle_t panel_handle = NULL;
     const bsp_display_config_t bsp_disp_cfg = {
         .max_transfer_sz = (BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT) * sizeof(uint16_t),
     };
-    BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new(&bsp_disp_cfg, &panel_handle, &io_handle));
+    BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new(&bsp_disp_cfg, &s_panel_handle, &io_handle));
 
-    esp_lcd_panel_disp_on_off(panel_handle, true);
+    esp_lcd_panel_disp_on_off(s_panel_handle, true);
 
     /* Add LCD screen */
     ESP_LOGD(TAG, "Add LCD screen");
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = io_handle,
-        .panel_handle = panel_handle,
+        .panel_handle = s_panel_handle,
         .buffer_size = BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT,
 #if CONFIG_BSP_LCD_DRAW_BUF_DOUBLE
         .double_buffer = 1,
@@ -602,7 +608,7 @@ static lv_display_t *bsp_display_lcd_init(void)
         }
     };
 #if BSP_LCD_H_OFFSET || BSP_LCD_V_OFFSET
-    esp_lcd_panel_set_gap(panel_handle, (BSP_LCD_H_OFFSET), (BSP_LCD_V_OFFSET));
+    esp_lcd_panel_set_gap(s_panel_handle, (BSP_LCD_H_OFFSET), (BSP_LCD_V_OFFSET));
 #endif
     return lvgl_port_add_disp(&disp_cfg);
 }

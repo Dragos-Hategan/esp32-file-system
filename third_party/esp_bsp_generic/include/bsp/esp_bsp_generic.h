@@ -155,6 +155,13 @@ typedef struct {
 } bsp_display_cfg_t;
 #endif //CONFIG_BSP_DISPLAY_ENABLED
 
+/**
+ * @brief Get the LCD panel handle created by bsp_display_start().
+ *
+ * @return esp_lcd_panel_handle_t Handle to the active LCD panel (NULL if display is not initialized).
+ */
+esp_lcd_panel_handle_t bsp_display_get_panel(void);
+
 /**************************************************************************************************
  *
  * I2C interface
