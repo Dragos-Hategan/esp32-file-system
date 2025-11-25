@@ -186,8 +186,6 @@ esp_err_t jpg_viewer_open(const jpg_viewer_open_opts_t *opts)
     /* Force a refresh now so subsequent LVGL cycles don't clear our direct draw */
     lv_refr_now(NULL);
 
-    ESP_LOGW("", "Before jpg_handler_set_src");
-
     esp_err_t err = jpg_handler_set_src(ctx->image, opts->path);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to render image: (%s)", esp_err_to_name(err));
@@ -200,8 +198,6 @@ esp_err_t jpg_viewer_open(const jpg_viewer_open_opts_t *opts)
         jpg_viewer_reset(ctx);
         return err;
     }
-
-    ESP_LOGW("", "After jpg_handler_set_src");
 
     lv_obj_set_style_opa(ctx->close_btn, LV_OPA_100, LV_PART_MAIN);
 
@@ -260,10 +256,8 @@ static esp_err_t jpg_handler_set_src(lv_obj_t *img, const char *path)
     if (!panel) {
         return ESP_ERR_INVALID_STATE;
     }
-
-    ESP_LOGW("", "Before jpg_draw_striped");
+    
     esp_err_t err = jpg_draw_striped(path, panel);
-    ESP_LOGW("", "After jpg_draw_striped");
 
     return err;
 }
