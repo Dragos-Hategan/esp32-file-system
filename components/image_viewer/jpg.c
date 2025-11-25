@@ -17,7 +17,7 @@
 typedef struct {
     lv_fs_file_t file;
     esp_lcd_panel_handle_t panel;
-    uint16_t *stripe;          /* DMA-capable stripe buffer */
+    uint16_t *stripe;               /* DMA-capable stripe buffer */
     uint32_t stripe_w;
     uint32_t stripe_h;
 } jpg_stripe_ctx_t;
@@ -37,23 +37,122 @@ typedef struct {
 static jpg_viewer_ctx_t s_jpg_viewer;
 
 /**
- * @brief Set the LVGL image source to a JPEG on disk.
+ * @brief Destroy the currently active JPG viewer screen and reset its context.
  *
- * Performs basic validation (non-empty path) before calling jpg_draw_striped().
+ * This helper deletes the LVGL screen associated with the viewer (if any)
+ * under a display lock, then calls jpg_viewer_reset() to clear the context.
+ * If the context is NULL or not active, it simply resets the context.
  *
- * @param img  LVGL image object (must be non-NULL).
- * @param path Path to JPEG file (drive-prefixed if using LVGL FS, e.g. "S:/...").
- * @return ESP_OK on success, ESP_ERR_INVALID_ARG on bad inputs.
+ * @param ctx Pointer to the viewer context to destroy.
+ */
+static void jpg_viewer_destroy_active(jpg_viewer_ctx_t *ctx);
+
+/**
+ * @brief Build the LVGL UI for the JPG viewer.
+ *
+ * This creates a new LVGL screen with a black transparent background,
+ * an image object centered on the screen and a close button aligned
+ * in the top-right corner. The close button is wired to jpg_viewer_on_close().
+ *
+ * @param ctx  Pointer to the viewer context to populate.
+ * @param path Path to the image file (currently unused in UI creation but
+ *             kept for potential future use).
+ */
+static void jpg_viewer_build_ui(jpg_viewer_ctx_t *ctx, const char *path);
+
+/**
+ * @brief Render the JPEG at the given path to the display panel.
+ *
+ * This function validates the LVGL image object and path, retrieves the
+ * display panel from the BSP and calls jpg_draw_striped() to decode and
+ * draw the JPEG in stripes.
+ *
+ * @param img  LVGL image object associated with the viewer (not used for
+ *             rendering in this implementation, but kept for API symmetry).
+ * @param path Path to the JPEG file to be rendered.
+ *
+ * @return
+ *      - ESP_OK on success
+ *      - ESP_ERR_INVALID_ARG if img or path is invalid
+ *      - ESP_ERR_INVALID_STATE if no valid panel is available
+ *      - Error code propagated from jpg_draw_striped() on failure
  */
 static esp_err_t jpg_handler_set_src(lv_obj_t *img, const char *path);
-static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel);
+
+/**
+ * @brief Reset the JPG viewer context to a clean state.
+ *
+ * This function stops and deletes the dim timer (if any) and clears the
+ * entire context structure to zero. It is safe to call with a NULL ctx
+ * pointer (no action is taken in that case).
+ *
+ * @param ctx Pointer to the viewer context to reset.
+ */
+static void jpg_viewer_reset(jpg_viewer_ctx_t *ctx);
+
+/**
+ * @brief LVGL event callback used to close the JPG viewer.
+ *
+ * This callback is attached to the close button. It retrieves the viewer
+ * context from the event user data, switches back to the return screen
+ * (or the previous screen if no explicit return screen is set), deletes
+ * the viewer screen and resets the context.
+ *
+ * @param e Pointer to the LVGL event descriptor.
+ */
+static void jpg_viewer_on_close(lv_event_t *e);
+
+/**
+ * @brief TJpgDec input callback for reading from LVGL filesystem.
+ *
+ * If @p buff is non-NULL, this function reads up to @p nbytes from the
+ * current file position into the buffer. If @p buff is NULL, it advances
+ * the file position by @p nbytes (seek).
+ *
+ * @param jd     Pointer to the TJpgDec decoder object.
+ * @param buff   Destination buffer to read into, or NULL to skip data.
+ * @param nbytes Number of bytes to read or skip.
+ *
+ * @return Number of bytes actually read or skipped, or 0 on error.
+ */
 static size_t input_cb(JDEC *jd, uint8_t *buff, size_t nbytes);
+
+/**
+ * @brief TJpgDec output callback to convert and push decoded pixels to the panel.
+ *
+ * The decoder provides a rectangular block of pixels in RGB888 format. This
+ * callback converts the block to RGB565, applying the required BGR swap, and
+ * stores it into a stripe buffer. The buffer is then drawn to the display
+ * using esp_lcd_panel_draw_bitmap().
+ *
+ * @param jd      Pointer to the TJpgDec decoder object.
+ * @param bitmap  Pointer to the decoded pixel data (RGB888).
+ * @param rect    Pointer to the rectangle describing the region in the image.
+ *
+ * @return
+ *      - 1 to continue decoding
+ *      - 0 to abort decoding due to error or invalid parameters
+ */
 static int output_cb(JDEC *jd, void *bitmap, JRECT *rect);
 
-static void jpg_viewer_destroy_active(jpg_viewer_ctx_t *ctx);
-static void jpg_viewer_build_ui(jpg_viewer_ctx_t *ctx, const char *path);
-static void jpg_viewer_reset(jpg_viewer_ctx_t *ctx);
-static void jpg_viewer_on_close(lv_event_t *e);
+/**
+ * @brief Decode and draw a JPEG image in stripes directly to an LCD panel.
+ *
+ * This function opens the JPEG file using LVGL's filesystem API, prepares
+ * a TJpgDec decoder instance and allocates a stripe buffer sized according
+ * to the MCU height and image width. The image is then decompressed via
+ * jd_decomp(), which repeatedly calls input_cb() and output_cb() to stream
+ * the image to the panel without loading it fully into memory.
+ *
+ * @param path  Path to the JPEG file in the LVGL filesystem.
+ * @param panel Handle to the LCD panel used for drawing.
+ *
+ * @return
+ *      - ESP_OK on successful decode and draw
+ *      - ESP_FAIL on file open, decoder prepare or decode failure
+ *      - ESP_ERR_NO_MEM if the stripe buffer allocation fails
+ */
+static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel);
 
 esp_err_t jpg_viewer_open(const jpg_viewer_open_opts_t *opts)
 {
