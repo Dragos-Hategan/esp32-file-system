@@ -30,7 +30,6 @@ typedef struct {
     lv_obj_t *path_label;
     lv_obj_t *return_screen;
     lv_obj_t *previous_screen;
-    lv_timer_t *dim_timer;
     char path[IMG_VIEWER_MAX_PATH];
 } jpg_viewer_ctx_t;
 
@@ -267,10 +266,6 @@ static void jpg_viewer_reset(jpg_viewer_ctx_t *ctx)
 {
     if (!ctx) {
         return;
-    }
-    if (ctx->dim_timer) {
-        lv_timer_del(ctx->dim_timer);
-        ctx->dim_timer = NULL;
     }
     memset(ctx, 0, sizeof(*ctx));
 }
