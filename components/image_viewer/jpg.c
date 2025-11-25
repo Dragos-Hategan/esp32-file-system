@@ -74,7 +74,7 @@ static void jpg_viewer_build_ui(jpg_viewer_ctx_t *ctx, const char *path);
  *      - ESP_OK on success
  *      - ESP_ERR_INVALID_ARG if img or path is invalid
  *      - ESP_ERR_INVALID_STATE if no valid panel is available
- *      - Error code propagated from jpg_draw_striped() on failure
+ *      - ESP_ERR_NOT_SUPPORTED if the jpg file is corrupted or it's specific type is not supported
  */
 static esp_err_t jpg_handler_set_src(lv_obj_t *img, const char *path);
 
@@ -150,6 +150,7 @@ static int output_cb(JDEC *jd, void *bitmap, JRECT *rect);
  *      - ESP_OK on successful decode and draw
  *      - ESP_FAIL on file open, decoder prepare or decode failure
  *      - ESP_ERR_NO_MEM if the stripe buffer allocation fails
+ *      - ESP_ERR_NOT_SUPPORTED if the jpg file is corrupted or it's specific type is not supported
  */
 static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel);
 
@@ -368,7 +369,7 @@ static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel
 
     lv_fs_res_t res = lv_fs_open(&ctx.file, path, LV_FS_MODE_RD);
     if (res != LV_FS_RES_OK) {
-        ESP_LOGE(TAG, "Failed to open image file");
+        ESP_LOGE(TAG, "Failed to open image file, lv_fs_res: (%d)", res);
         return ESP_FAIL;
     }
 
@@ -377,8 +378,12 @@ static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel
     JDEC jd;
     JRESULT rc = jd_prepare(&jd, input_cb, workb, sizeof(workb), &ctx);
     if (rc != JDR_OK) {
-        ESP_LOGE(TAG, "Failed to initialize tjpgd decoder");
-        err = ESP_FAIL;
+        ESP_LOGE(TAG, "Failed to initialize tjpgd decoder, JRESULT: (%d)", rc);
+        if (rc == JDR_INP || rc == JDR_FMT1 || rc == JDR_FMT2 || rc == JDR_FMT3){
+            err = ESP_ERR_NOT_SUPPORTED;
+        }else{
+            err = ESP_FAIL;
+        }
         goto cleanup;
     }
 
@@ -386,6 +391,7 @@ static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel
     ctx.stripe_w = jd.width;
     ctx.stripe_h = jd.msy * 8;
     size_t stripe_size = ctx.stripe_w * ctx.stripe_h * sizeof(uint16_t);
+    ESP_LOGW(TAG, "Stripe size is %lu", stripe_size);
     ctx.stripe = heap_caps_malloc(stripe_size, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!ctx.stripe) {
         ESP_LOGE(TAG, "Failed to allocate memory for the stripe buffer used for image draw");
@@ -395,7 +401,7 @@ static esp_err_t jpg_draw_striped(const char *path, esp_lcd_panel_handle_t panel
 
     rc = jd_decomp(&jd, output_cb, 0); /* scale 0 = full res */
     if (rc != JDR_OK) {
-        ESP_LOGE(TAG, "Failed to draw image");
+        ESP_LOGE(TAG, "Failed to draw image, JRESULT: (%d)", rc);
         err = ESP_FAIL;
     }
 

@@ -205,7 +205,12 @@ static void file_browser_wait_for_reconnection_task(void* arg);
 /**
  * @brief Show an informational prompt for unsupported file formats.
  */
- static void file_browser_show_unsupported_prompt(void);
+static void file_browser_show_unsupported_prompt(void);
+
+/**
+ * @brief Show an informational prompt for unsupported jpeg formats.
+ */
+static void file_browser_show_jpeg_unsupported_prompt(void);
 
 /**
  * @brief Close handler for the unsupported-format prompt.
@@ -918,8 +923,12 @@ static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry
 
     esp_err_t err = jpg_viewer_open(&opts);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open JPEG \"%s\": %s", path, esp_err_to_name(err));
-        sdspi_schedule_sd_retry();
+        if (err == ESP_ERR_NOT_SUPPORTED) {
+            file_browser_show_jpeg_unsupported_prompt();
+        } else {
+            ESP_LOGE(TAG, "Failed to open JPEG \"%s\": %s", path, esp_err_to_name(err));
+            sdspi_schedule_sd_retry();
+        }
     }
 }
 
@@ -952,6 +961,22 @@ static void file_browser_show_unsupported_prompt(void)
 
     lv_obj_t *label = lv_label_create(mbox);
     lv_label_set_text(label, "This file format is not yet supported.");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *ok_btn = lv_msgbox_add_footer_button(mbox, "OK");
+    lv_obj_add_event_cb(ok_btn, file_browser_on_unsupported_ok, LV_EVENT_CLICKED, mbox);
+}
+
+static void file_browser_show_jpeg_unsupported_prompt(void)
+{
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text(label, "The image is corrupted or this specific JPG type is not supported by the system.");
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);

@@ -20,9 +20,12 @@ typedef struct {
  * if provided; otherwise it loads the previously active screen.
  *
  * @param opts Options struct (must not be NULL); @p path must be non-empty.
- * @return ESP_OK on success, ESP_ERR_INVALID_ARG on bad input,
- *         ESP_ERR_NOT_FOUND if the file is missing, ESP_ERR_TIMEOUT if display
- *         lock cannot be acquired, or ESP_FAIL on LVGL source set failure.
+ * @return 
+ *         - ESP_OK on success
+ *         - ESP_ERR_INVALID_ARG on bad input
+ *         - ESP_ERR_NOT_FOUND if the file is missing
+ *         - ESP_ERR_TIMEOUT if display lock cannot be acquired, or ESP_FAIL on LVGL source set failure.
+ *         - ESP_ERR_NOT_SUPPORTED if the jpg file is corrupted or it's specific type is not supported
  */
 esp_err_t jpg_viewer_open(const jpg_viewer_open_opts_t *opts);
 
