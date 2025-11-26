@@ -26,7 +26,7 @@
 
 #define FILE_BROWSER_MAX_ENTRIES_DEFAULT 512
 
-#define FILE_BROWSER_WAIT_STACK   (6 * 1024)
+#define FILE_BROWSER_WAIT_STACK_SIZE_B   (6 * 1024)
 #define FILE_BROWSER_WAIT_PRIO    (4)
 
 typedef struct {
@@ -957,7 +957,7 @@ static void file_browser_schedule_wait_for_reconnection(void)
     
     BaseType_t res = xTaskCreatePinnedToCore(file_browser_wait_for_reconnection_task,
                                              "file_browser_wait_task",
-                                             FILE_BROWSER_WAIT_STACK,
+                                             FILE_BROWSER_WAIT_STACK_SIZE_B,
                                              NULL,
                                              FILE_BROWSER_WAIT_PRIO,
                                              &file_browser_wait_task,
