@@ -445,6 +445,17 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
  *         ESP_FAIL on other filesystem/errno-based errors.
  */
  static esp_err_t file_browser_delete_path(const char *path);
+
+/**
+ * @brief Recursively accumulate byte size for a file or directory tree.
+ *
+ * @param path  Absolute path to a file or directory.
+ * @param bytes In/out accumulator; on success, increased by the size found.
+ * @return ESP_OK on success,
+ *         ESP_ERR_INVALID_ARG for invalid input,
+ *         ESP_ERR_INVALID_SIZE if a composed child path would overflow,
+ *         ESP_FAIL on stat/opendir errors.
+ */
 static esp_err_t file_browser_compute_total_size(const char *path, uint64_t *bytes);
 
 /**************************************************************************************************/
@@ -452,41 +463,78 @@ static esp_err_t file_browser_compute_total_size(const char *path, uint64_t *byt
 /*************************************** Clipboard & Paste Helpers ********************************/
 
 /**
- * @brief Update paste button state and label based on clipboard contents.
+ * @brief Update paste button state/label based on clipboard contents.
+ *
+ * Disables the paste button when the clipboard is empty; shows
+ * "Paste (copy)" or "Paste (cut)" when a clipboard entry exists.
+ *
+ * @param ctx Browser context owning the paste button.
  */
 static void file_browser_update_paste_button(file_browser_ctx_t *ctx);
 
 /**
- * @brief "Paste" button handler.
+ * @brief "Paste" button handler (dispatches copy/cut flow).
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
  */
 static void file_browser_on_paste_click(lv_event_t *e);
 
 /**
  * @brief Show overwrite/rename prompt when paste destination already exists.
+ *
+ * @param ctx       Browser context.
+ * @param dest_path Absolute destination path that already exists.
  */
 static void file_browser_show_paste_conflict(file_browser_ctx_t *ctx, const char *dest_path);
 
 /**
  * @brief Close the paste conflict dialog if present.
+ *
+ * @param ctx Browser context.
  */
 static void file_browser_close_paste_conflict(file_browser_ctx_t *ctx);
 
 /**
  * @brief Handle overwrite/rename/cancel selection from paste conflict dialog.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
  */
 static void file_browser_on_paste_conflict(lv_event_t *e);
 
 /**
- * @brief Show/close copy confirmation prompt with total size.
+ * @brief Show copy confirmation prompt with total size (used on Paste for copy).
+ *
+ * @param ctx   Browser context (requires clipboard + target set).
+ * @param bytes Total bytes to be copied.
  */
 static void file_browser_show_copy_confirm(file_browser_ctx_t *ctx, uint64_t bytes);
+
+/**
+ * @brief Close copy confirmation prompt if present.
+ *
+ * @param ctx Browser context.
+ */
 static void file_browser_close_copy_confirm(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Handle copy confirmation buttons (OK/Cancel).
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
 static void file_browser_on_copy_confirm(lv_event_t *e);
 
 /**
- * @brief Show/hide a loading overlay during long copy/cut operations.
+ * @brief Show a loading overlay during long copy/cut operations.
+ *
+ * @param ctx Browser context.
  */
 static void file_browser_show_loading(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Hide the loading overlay if present.
+ *
+ * @param ctx Browser context.
+ */
 static void file_browser_hide_loading(file_browser_ctx_t *ctx);
 
 /**
@@ -500,19 +548,84 @@ static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char 
 
 /**
  * @brief Recursive copy (file or directory).
+ *
+ * @param src  Absolute source path.
+ * @param dest Absolute destination path.
+ * @return ESP_OK on success or an error from @c file_browser_copy_file/dir.
  */
 static esp_err_t file_browser_copy_entry(const char *src, const char *dest);
+
+/**
+ * @brief Copy a single file from src to dest using buffered I/O.
+ *
+ * @param src  Absolute source file path.
+ * @param dest Absolute destination file path (created/overwritten).
+ * @return ESP_OK on success; ESP_FAIL on fopen/fread/fwrite errors.
+ */
 static esp_err_t file_browser_copy_file(const char *src, const char *dest);
+
+/**
+ * @brief Recursively copy a directory tree.
+ *
+ * Creates the destination directory, then copies children recursively
+ * via @c file_browser_copy_entry().
+ *
+ * @param src  Absolute source directory path.
+ * @param dest Absolute destination directory path (created).
+ * @return ESP_OK on success; ESP_FAIL/ESP_ERR_INVALID_SIZE on errors.
+ */
 static esp_err_t file_browser_copy_dir(const char *src, const char *dest);
 
 /**
- * @brief Utility helpers for paste flow.
+ * @brief Check if a path is a subpath of another (prefix + separator).
+ *
+ * @param parent Potential parent path.
+ * @param child  Path to test.
+ * @return true if child starts with parent and is below it.
  */
 static bool file_browser_is_subpath(const char *parent, const char *child);
+
+/**
+ * @brief Lightweight existence check using stat().
+ *
+ * @param path Absolute path to test.
+ * @return true if stat() succeeds, false otherwise.
+ */
 static bool file_browser_path_exists(const char *path);
+
+/**
+ * @brief Generate a unique "<name>_copy" (or numbered) within a directory.
+ *
+ * @param directory Destination directory path.
+ * @param name      Base entry name.
+ * @param out       Output buffer for new name.
+ * @param out_len   Size of @p out.
+ * @return ESP_OK if a free name was produced; ESP_ERR_NOT_FOUND if none within attempts;
+ *         ESP_ERR_INVALID_ARG/SIZE on bad inputs.
+ */
 static esp_err_t file_browser_generate_copy_name(const char *directory, const char *name, char *out, size_t out_len);
+
+/**
+ * @brief Reset clipboard state to empty.
+ *
+ * @param ctx Browser context.
+ */
 static void file_browser_clear_clipboard(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Show a simple OK message box with provided text.
+ *
+ * @param msg Null-terminated message to display.
+ */
 static void file_browser_show_message(const char *msg);
+
+/**
+ * @brief Format a 64-bit byte count into a short human-readable string.
+ *
+ * @param bytes   Number of bytes.
+ * @param out     Output buffer.
+ * @param out_len Buffer length.
+ */
 static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len);
 
 /**************************************************************************************************/
