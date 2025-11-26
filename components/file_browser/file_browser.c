@@ -984,9 +984,22 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
     file_browser_update_paste_button(ctx);
 
-    ctx->path_label = lv_label_create(scr);
+    lv_obj_t *path_row = lv_obj_create(scr);
+    lv_obj_remove_style_all(path_row);
+    lv_obj_set_size(path_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(path_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(path_row, 4, 0);
+
+    lv_obj_t *path_prefix = lv_label_create(path_row);
+    lv_label_set_text(path_prefix, "Path: ");
+    lv_obj_set_style_text_align(path_prefix, LV_TEXT_ALIGN_LEFT, 0);
+
+    ctx->path_label = lv_label_create(path_row);
     lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(ctx->path_label, "Path: ");
+    lv_obj_set_flex_grow(ctx->path_label, 1);
+    lv_obj_set_width(ctx->path_label, LV_PCT(100));
+    lv_obj_set_style_text_align(ctx->path_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(ctx->path_label, "/");
 
     ctx->list = lv_list_create(scr);
     lv_obj_set_flex_grow(ctx->list, 1);
@@ -1145,8 +1158,28 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
 
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
 {
+    if (!ctx || !ctx->path_label) {
+        return;
+    }
     const char *path = fs_nav_current_path(&ctx->nav);
-    lv_label_set_text(ctx->path_label, path ? path : "-");
+    const char *mount = CONFIG_SDSPI_MOUNT_POINT;
+    char display[FS_NAV_MAX_PATH + 8];
+
+    if (path && mount && strncmp(path, mount, strlen(mount)) == 0) {
+        const char *rest = path + strlen(mount);
+        if (*rest == '/') {
+            rest++;
+        }
+        if (*rest == '\0') {
+            strlcpy(display, "/", sizeof(display));
+        } else {
+            snprintf(display, sizeof(display), "/%s", rest);
+        }
+    } else {
+        snprintf(display, sizeof(display), "%s", path ? path : "-");
+    }
+
+    lv_label_set_text(ctx->path_label, display);
 }
 
 static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)

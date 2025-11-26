@@ -119,6 +119,16 @@ static void text_viewer_apply_mode(text_viewer_ctx_t *ctx);
 static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg);
 
 /**
+ * @brief Set the path label using a UI-friendly path (hide mountpoint).
+ *
+ * Replaces leading CONFIG_SDSPI_MOUNT_POINT with "/" for display purposes.
+ *
+ * @param ctx Viewer context.
+ * @param path Filesystem path (may be NULL/empty).
+ */
+static void text_viewer_set_path_label(text_viewer_ctx_t *ctx, const char *path);
+
+/**
  * @brief Replace the stored original text snapshot.
  *
  * Frees the previous snapshot and stores a duplicate of @p text.
@@ -568,14 +578,14 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
         ctx->path[0] = '\0';
         strlcpy(ctx->directory, opts->directory, sizeof(ctx->directory));
         strlcpy(ctx->pending_name, ".txt", sizeof(ctx->pending_name));
-        lv_label_set_text(ctx->path_label, "");
+        text_viewer_set_path_label(ctx, NULL);
     }
     else
     {
         ctx->directory[0] = '\0';
         ctx->pending_name[0] = '\0';
         strlcpy(ctx->path, opts->path, sizeof(ctx->path));
-        lv_label_set_text(ctx->path_label, ctx->path);
+        text_viewer_set_path_label(ctx, ctx->path);
     }
 
     lv_textarea_set_text(ctx->text_area, content);
@@ -640,9 +650,22 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
     lv_obj_set_style_min_height(ctx->status_label, status_height, 0);
     lv_obj_set_style_max_height(ctx->status_label, status_height, 0);
 
-    ctx->path_label = lv_label_create(scr);
+    lv_obj_t *path_row = lv_obj_create(scr);
+    lv_obj_remove_style_all(path_row);
+    lv_obj_set_size(path_row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(path_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(path_row, 4, 0);
+
+    lv_obj_t *path_prefix = lv_label_create(path_row);
+    lv_label_set_text(path_prefix, "Path: ");
+    lv_obj_set_style_text_align(path_prefix, LV_TEXT_ALIGN_LEFT, 0);
+
+    ctx->path_label = lv_label_create(path_row);
     lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(ctx->path_label, "Path: ");
+    lv_obj_set_flex_grow(ctx->path_label, 1);
+    lv_obj_set_width(ctx->path_label, LV_PCT(100));
+    lv_obj_set_style_text_align(ctx->path_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_text(ctx->path_label, "");
 
     ctx->text_area = lv_textarea_create(scr);
     lv_obj_set_flex_grow(ctx->text_area, 1);
@@ -689,6 +712,40 @@ static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg)
     {
         lv_label_set_text(ctx->status_label, msg);
     }
+}
+
+static void text_viewer_set_path_label(text_viewer_ctx_t *ctx, const char *path)
+{
+    if (!ctx || !ctx->path_label)
+    {
+        return;
+    }
+
+    const char *mount = CONFIG_SDSPI_MOUNT_POINT;
+    char display[FS_TEXT_MAX_PATH + 8];
+
+    if (path && mount && strncmp(path, mount, strlen(mount)) == 0)
+    {
+        const char *rest = path + strlen(mount);
+        if (*rest == '/')
+        {
+            rest++;
+        }
+        if (*rest == '\0')
+        {
+            strlcpy(display, "/", sizeof(display));
+        }
+        else
+        {
+            snprintf(display, sizeof(display), "/%s", rest);
+        }
+    }
+    else
+    {
+        snprintf(display, sizeof(display), "%s", path ? path : "");
+    }
+
+    lv_label_set_text(ctx->path_label, display);
 }
 
 static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text)
@@ -1632,7 +1689,7 @@ static void text_viewer_on_name_dialog(lv_event_t *e)
     strlcpy(ctx->pending_name, name_buf, sizeof(ctx->pending_name));
     ctx->directory[0] = '\0';
     ctx->new_file = false;
-    lv_label_set_text(ctx->path_label, ctx->path);
+    text_viewer_set_path_label(ctx, ctx->path);
     text_viewer_close_name_dialog(ctx);
     text_viewer_handle_save(ctx);
 }
