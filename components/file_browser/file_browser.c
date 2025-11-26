@@ -1590,6 +1590,7 @@ static void file_browser_on_parent_click(lv_event_t *e)
         return;
     }
 
+    file_browser_show_loading(ctx);
     esp_err_t err = fs_nav_go_parent(&ctx->nav);
     if (err == ESP_OK) {
         file_browser_sync_view(ctx);
@@ -1599,6 +1600,7 @@ static void file_browser_on_parent_click(lv_event_t *e)
         sdspi_schedule_sd_retry();
         file_browser_schedule_wait_for_reconnection();
     }
+    file_browser_hide_loading(ctx);
 }
 
 static void file_browser_on_sort_mode_click(lv_event_t *e)

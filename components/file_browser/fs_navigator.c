@@ -216,7 +216,6 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
         return storage_err;
     }
 
-    size_t limit = nav->max_entries ? nav->max_entries : SIZE_MAX;
     size_t total = 0;
 
     DIR *dir = opendir(nav->current);
