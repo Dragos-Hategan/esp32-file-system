@@ -37,11 +37,21 @@ typedef struct {
     char directory[FS_NAV_MAX_PATH];
 } file_browser_action_entry_t;
 
+typedef struct {
+    bool has_item;
+    bool cut; /* true = cut (move), false = copy */
+    bool is_dir;
+    char name[FS_NAV_MAX_NAME];
+    char src_path[FS_NAV_MAX_PATH];
+} file_browser_clipboard_t;
+
 typedef enum {
     FILE_BROWSER_ACTION_EDIT = 1,
     FILE_BROWSER_ACTION_DELETE = 2,
     FILE_BROWSER_ACTION_CANCEL = 3,
     FILE_BROWSER_ACTION_RENAME = 4,
+    FILE_BROWSER_ACTION_COPY = 5,
+    FILE_BROWSER_ACTION_CUT = 6,
 } file_browser_action_type_t;
 
 typedef struct {
@@ -55,12 +65,19 @@ typedef struct {
     lv_obj_t *folder_dialog;
     lv_obj_t *folder_textarea;
     lv_obj_t *folder_keyboard;
+    lv_obj_t *paste_btn;
+    lv_obj_t *paste_label;
     lv_obj_t *action_mbox;
     lv_obj_t *confirm_mbox;
+    lv_obj_t *paste_conflict_mbox;
+    lv_obj_t *loading_dialog;
     lv_obj_t *rename_dialog;
     lv_obj_t *rename_textarea;
     lv_obj_t *rename_keyboard;
     file_browser_action_entry_t action_entry;
+    file_browser_clipboard_t clipboard;
+    char paste_conflict_path[FS_NAV_MAX_PATH];
+    char paste_conflict_name[FS_NAV_MAX_NAME];
     bool suppress_click;
     bool pending_go_parent;
 } file_browser_ctx_t;
@@ -428,6 +445,66 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 
 /**************************************************************************************************/
 
+/*************************************** Clipboard & Paste Helpers ********************************/
+
+/**
+ * @brief Update paste button state and label based on clipboard contents.
+ */
+static void file_browser_update_paste_button(file_browser_ctx_t *ctx);
+
+/**
+ * @brief "Paste" button handler.
+ */
+static void file_browser_on_paste_click(lv_event_t *e);
+
+/**
+ * @brief Show overwrite/rename prompt when paste destination already exists.
+ */
+static void file_browser_show_paste_conflict(file_browser_ctx_t *ctx, const char *dest_path);
+
+/**
+ * @brief Close the paste conflict dialog if present.
+ */
+static void file_browser_close_paste_conflict(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Handle overwrite/rename/cancel selection from paste conflict dialog.
+ */
+static void file_browser_on_paste_conflict(lv_event_t *e);
+
+/**
+ * @brief Show/hide a loading overlay during long copy/cut operations.
+ */
+static void file_browser_show_loading(file_browser_ctx_t *ctx);
+static void file_browser_hide_loading(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Execute copy or cut into destination path.
+ *
+ * @param ctx Browser context with an active clipboard.
+ * @param dest_path Destination absolute path.
+ * @param allow_overwrite True to delete an existing destination before writing.
+ */
+static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char *dest_path, bool allow_overwrite);
+
+/**
+ * @brief Recursive copy (file or directory).
+ */
+static esp_err_t file_browser_copy_entry(const char *src, const char *dest);
+static esp_err_t file_browser_copy_file(const char *src, const char *dest);
+static esp_err_t file_browser_copy_dir(const char *src, const char *dest);
+
+/**
+ * @brief Utility helpers for paste flow.
+ */
+static bool file_browser_is_subpath(const char *parent, const char *child);
+static bool file_browser_path_exists(const char *path);
+static esp_err_t file_browser_generate_copy_name(const char *directory, const char *name, char *out, size_t out_len);
+static void file_browser_clear_clipboard(file_browser_ctx_t *ctx);
+static void file_browser_show_message(const char *msg);
+
+/**************************************************************************************************/
+
 
 /************************************** Action Menu Workflow **************************************/
 
@@ -732,6 +809,15 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_label_set_text(new_folder_lbl, "New Folder");
     lv_obj_set_style_text_align(new_folder_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
+    ctx->paste_btn = lv_button_create(header);
+    lv_obj_set_style_radius(ctx->paste_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->paste_btn, 6, 0);
+    lv_obj_add_event_cb(ctx->paste_btn, file_browser_on_paste_click, LV_EVENT_CLICKED, ctx);
+    ctx->paste_label = lv_label_create(ctx->paste_btn);
+    lv_label_set_text(ctx->paste_label, "Paste");
+    lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
+    file_browser_update_paste_button(ctx);
+
     ctx->list = lv_list_create(scr);
     lv_obj_set_flex_grow(ctx->list, 1);
     lv_obj_set_size(ctx->list, LV_PCT(100), LV_PCT(100));
@@ -789,6 +875,7 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     file_browser_update_path_label(ctx);
     file_browser_update_sort_badges(ctx);
     file_browser_populate_list(ctx);
+    file_browser_update_paste_button(ctx);
 }
 
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
@@ -966,6 +1053,8 @@ static esp_err_t file_browser_reload(void)
     }
     file_browser_sync_view(ctx);
     file_browser_clear_action_state(ctx);
+    file_browser_close_paste_conflict(ctx);
+    file_browser_hide_loading(ctx);
     bsp_display_unlock();
     return ESP_OK;
 }
@@ -977,7 +1066,7 @@ static void file_browser_show_unsupported_prompt(void)
     lv_obj_center(mbox);
 
     lv_obj_t *label = lv_label_create(mbox);
-    lv_label_set_text(label, "This file format is not yet supported.");
+    lv_label_set_text(label, "This file format is not supported.");
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -1513,6 +1602,442 @@ static esp_err_t file_browser_delete_path(const char *path)
     return ESP_OK;
 }
 
+static void file_browser_show_message(const char *msg)
+{
+    if (!msg) {
+        return;
+    }
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text(label, msg);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *ok_btn = lv_msgbox_add_footer_button(mbox, "OK");
+    lv_obj_add_event_cb(ok_btn, file_browser_on_unsupported_ok, LV_EVENT_CLICKED, mbox);
+}
+
+static void file_browser_clear_clipboard(file_browser_ctx_t *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+    memset(&ctx->clipboard, 0, sizeof(ctx->clipboard));
+}
+
+static void file_browser_update_paste_button(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->paste_btn || !ctx->paste_label) {
+        return;
+    }
+
+    if (!ctx->clipboard.has_item) {
+        lv_label_set_text(ctx->paste_label, "Paste");
+        lv_obj_add_state(ctx->paste_btn, LV_STATE_DISABLED);
+    } else {
+        lv_label_set_text(ctx->paste_label, ctx->clipboard.cut ? "Paste (cut)" : "Paste (copy)");
+        lv_obj_remove_state(ctx->paste_btn, LV_STATE_DISABLED);
+    }
+}
+
+static bool file_browser_path_exists(const char *path)
+{
+    struct stat st;
+    return path && path[0] != '\0' && (stat(path, &st) == 0);
+}
+
+static bool file_browser_is_subpath(const char *parent, const char *child)
+{
+    if (!parent || !child) {
+        return false;
+    }
+    size_t parent_len = strlen(parent);
+    size_t child_len = strlen(child);
+    if (parent_len == 0 || child_len <= parent_len) {
+        return false;
+    }
+    if (strncmp(parent, child, parent_len) != 0) {
+        return false;
+    }
+    if (parent[parent_len - 1] == '/') {
+        return true;
+    }
+    return child[parent_len] == '/';
+}
+
+static esp_err_t file_browser_copy_file(const char *src, const char *dest)
+{
+    FILE *in = fopen(src, "rb");
+    if (!in) {
+        ESP_LOGE(TAG, "fopen(%s) failed (errno=%d)", src, errno);
+        return ESP_FAIL;
+    }
+    FILE *out = fopen(dest, "wb");
+    if (!out) {
+        ESP_LOGE(TAG, "fopen(%s) failed (errno=%d)", dest, errno);
+        fclose(in);
+        return ESP_FAIL;
+    }
+
+    uint8_t buf[4096];
+    size_t r = 0;
+    esp_err_t err = ESP_OK;
+    while ((r = fread(buf, 1, sizeof(buf), in)) > 0) {
+        size_t w = fwrite(buf, 1, r, out);
+        if (w != r) {
+            ESP_LOGE(TAG, "fwrite(%s) failed (errno=%d)", dest, errno);
+            err = ESP_FAIL;
+            break;
+        }
+    }
+
+    if (ferror(in)) {
+        ESP_LOGE(TAG, "fread(%s) failed (errno=%d)", src, errno);
+        err = ESP_FAIL;
+    }
+
+    fclose(out);
+    fclose(in);
+    if (err != ESP_OK) {
+        remove(dest);
+    }
+    return err;
+}
+
+static esp_err_t file_browser_copy_dir(const char *src, const char *dest)
+{
+    if (mkdir(dest, 0775) != 0) {
+        ESP_LOGE(TAG, "mkdir(%s) failed (errno=%d)", dest, errno);
+        return ESP_FAIL;
+    }
+
+    DIR *dir = opendir(src);
+    if (!dir) {
+        ESP_LOGE(TAG, "opendir(%s) failed (errno=%d)", src, errno);
+        rmdir(dest);
+        return ESP_FAIL;
+    }
+
+    struct dirent *dent = NULL;
+    while ((dent = readdir(dir)) != NULL) {
+        if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) {
+            continue;
+        }
+        char child_src[FS_NAV_MAX_PATH];
+        char child_dest[FS_NAV_MAX_PATH];
+        int ns = snprintf(child_src, sizeof(child_src), "%s/%s", src, dent->d_name);
+        int nd = snprintf(child_dest, sizeof(child_dest), "%s/%s", dest, dent->d_name);
+        if (ns < 0 || ns >= (int)sizeof(child_src) || nd < 0 || nd >= (int)sizeof(child_dest)) {
+            closedir(dir);
+            file_browser_delete_path(dest);
+            return ESP_ERR_INVALID_SIZE;
+        }
+        esp_err_t err = file_browser_copy_entry(child_src, child_dest);
+        if (err != ESP_OK) {
+            closedir(dir);
+            file_browser_delete_path(dest);
+            return err;
+        }
+    }
+    closedir(dir);
+    return ESP_OK;
+}
+
+static esp_err_t file_browser_copy_entry(const char *src, const char *dest)
+{
+    if (!src || !dest) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    struct stat st;
+    if (stat(src, &st) != 0) {
+        ESP_LOGE(TAG, "stat(%s) failed (errno=%d)", src, errno);
+        return ESP_FAIL;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        return file_browser_copy_dir(src, dest);
+    }
+    return file_browser_copy_file(src, dest);
+}
+
+static esp_err_t file_browser_generate_copy_name(const char *directory, const char *name, char *out, size_t out_len)
+{
+    if (!directory || !name || !out || out_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char base[FS_NAV_MAX_NAME];
+    char ext[FS_NAV_MAX_NAME];
+    const char *dot = strrchr(name, '.');
+    if (dot && dot != name && dot[1] != '\0') {
+        size_t base_len = (size_t)(dot - name);
+        if (base_len >= sizeof(base)) {
+            base_len = sizeof(base) - 1;
+        }
+        memcpy(base, name, base_len);
+        base[base_len] = '\0';
+        strlcpy(ext, dot, sizeof(ext));
+    } else {
+        strlcpy(base, name, sizeof(base));
+        ext[0] = '\0';
+    }
+
+    char candidate[FS_NAV_MAX_NAME];
+    size_t ext_len = strlen(ext);
+    /* longest suffix we generate is "_copy (100)" (11 chars); keep a small cushion */
+    size_t max_suffix_len = 12;
+    size_t max_base_len = FS_NAV_MAX_NAME - 1;
+    if (max_base_len > ext_len + max_suffix_len) {
+        max_base_len -= (ext_len + max_suffix_len);
+    } else {
+        max_base_len = 0;
+    }
+    if (max_base_len == 0) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (strlen(base) > max_base_len) {
+        base[max_base_len] = '\0';
+    }
+
+    for (int i = 0; i < 100; ++i) {
+        if (i == 0) {
+            int written = snprintf(candidate, sizeof(candidate), "%s_copy%s", base, ext);
+            if (written < 0 || written >= (int)sizeof(candidate)) {
+                continue;
+            }
+        } else {
+            int written = snprintf(candidate, sizeof(candidate), "%s_copy (%d)%s", base, i + 1, ext);
+            if (written < 0 || written >= (int)sizeof(candidate)) {
+                continue;
+            }
+        }
+
+        char full[FS_NAV_MAX_PATH];
+        int needed = snprintf(full, sizeof(full), "%s/%s", directory, candidate);
+        if (needed < 0 || needed >= (int)sizeof(full)) {
+            continue;
+        }
+        if (!file_browser_path_exists(full)) {
+            strlcpy(out, candidate, out_len);
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+static void file_browser_close_paste_conflict(file_browser_ctx_t *ctx)
+{
+    if (ctx && ctx->paste_conflict_mbox) {
+        lv_msgbox_close(ctx->paste_conflict_mbox);
+        ctx->paste_conflict_mbox = NULL;
+        ctx->paste_conflict_path[0] = '\0';
+        ctx->paste_conflict_name[0] = '\0';
+    }
+}
+
+static void file_browser_show_paste_conflict(file_browser_ctx_t *ctx, const char *dest_path)
+{
+    if (!ctx || !ctx->clipboard.has_item || !dest_path) {
+        return;
+    }
+    file_browser_close_paste_conflict(ctx);
+    strlcpy(ctx->paste_conflict_path, dest_path, sizeof(ctx->paste_conflict_path));
+    strlcpy(ctx->paste_conflict_name, ctx->clipboard.name, sizeof(ctx->paste_conflict_name));
+
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    ctx->paste_conflict_mbox = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text_fmt(label, "\"%s\" already exists. Replace or keep both?", ctx->paste_conflict_name);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *replace_btn = lv_msgbox_add_footer_button(mbox, "Replace");
+    lv_obj_set_user_data(replace_btn, (void *)1);
+    lv_obj_add_event_cb(replace_btn, file_browser_on_paste_conflict, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *rename_btn = lv_msgbox_add_footer_button(mbox, "Keep both");
+    lv_obj_set_user_data(rename_btn, (void *)2);
+    lv_obj_add_event_cb(rename_btn, file_browser_on_paste_conflict, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *cancel_btn = lv_msgbox_add_footer_button(mbox, "Cancel");
+    lv_obj_set_user_data(cancel_btn, (void *)0);
+    lv_obj_add_event_cb(cancel_btn, file_browser_on_paste_conflict, LV_EVENT_CLICKED, ctx);
+}
+
+static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char *dest_path, bool allow_overwrite)
+{
+    if (!ctx || !ctx->clipboard.has_item || !dest_path) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (ctx->clipboard.is_dir && file_browser_is_subpath(ctx->clipboard.src_path, dest_path)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!allow_overwrite && file_browser_path_exists(dest_path)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (allow_overwrite && file_browser_path_exists(dest_path)) {
+        esp_err_t del = file_browser_delete_path(dest_path);
+        if (del != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to delete destination before overwrite: %s", esp_err_to_name(del));
+            return del;
+        }
+    }
+
+    esp_err_t err = ESP_OK;
+    if (ctx->clipboard.cut) {
+        if (rename(ctx->clipboard.src_path, dest_path) != 0) {
+            if (errno != EXDEV) {
+                ESP_LOGW(TAG, "rename(%s -> %s) failed (errno=%d), falling back to copy+delete", ctx->clipboard.src_path, dest_path, errno);
+            }
+            err = file_browser_copy_entry(ctx->clipboard.src_path, dest_path);
+            if (err == ESP_OK) {
+                err = file_browser_delete_path(ctx->clipboard.src_path);
+                if (err != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to remove source after cut: %s", esp_err_to_name(err));
+                }
+            }
+        }
+        if (err == ESP_OK) {
+            file_browser_clear_clipboard(ctx);
+            file_browser_update_paste_button(ctx);
+        }
+        return err;
+    }
+
+    err = file_browser_copy_entry(ctx->clipboard.src_path, dest_path);
+    if (err == ESP_OK) {
+        file_browser_clear_clipboard(ctx);
+        file_browser_update_paste_button(ctx);
+    }
+    return err;
+}
+
+static void file_browser_on_paste_click(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->clipboard.has_item) {
+        return;
+    }
+
+    char dest_path[FS_NAV_MAX_PATH];
+    esp_err_t err = fs_nav_compose_path(&ctx->nav, ctx->clipboard.name, dest_path, sizeof(dest_path));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to compose paste path: %s", esp_err_to_name(err));
+        file_browser_show_message("Destination path too long.");
+        return;
+    }
+
+    if (strcmp(dest_path, ctx->clipboard.src_path) == 0) {
+        file_browser_show_message("Already in this folder.");
+        return;
+    }
+
+    if (ctx->clipboard.is_dir && file_browser_is_subpath(ctx->clipboard.src_path, dest_path)) {
+        file_browser_show_message("Cannot paste a folder inside itself.");
+        return;
+    }
+
+    if (file_browser_path_exists(dest_path)) {
+        file_browser_show_paste_conflict(ctx, dest_path);
+        return;
+    }
+
+    file_browser_show_loading(ctx);
+    err = file_browser_perform_paste(ctx, dest_path, false);
+    file_browser_hide_loading(ctx);
+    if (err != ESP_OK) {
+        file_browser_show_message(esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
+        return;
+    }
+
+    err = file_browser_reload();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to refresh after paste: %s", esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
+    }
+}
+
+static void file_browser_on_paste_conflict(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    int action = (int)(uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
+    file_browser_close_paste_conflict(ctx);
+
+    if (!ctx->clipboard.has_item || ctx->paste_conflict_path[0] == '\0') {
+        return;
+    }
+
+    esp_err_t err = ESP_OK;
+    file_browser_show_loading(ctx);
+    if (action == 1) {
+        err = file_browser_perform_paste(ctx, ctx->paste_conflict_path, true);
+    } else if (action == 2) {
+        const char *last = strrchr(ctx->paste_conflict_path, '/');
+        if (!last || last == ctx->paste_conflict_path) {
+            file_browser_hide_loading(ctx);
+            file_browser_show_message("Invalid destination path.");
+            return;
+        }
+        char directory[FS_NAV_MAX_PATH];
+        size_t dir_len = (size_t)(last - ctx->paste_conflict_path);
+        if (dir_len >= sizeof(directory)) {
+            file_browser_hide_loading(ctx);
+            file_browser_show_message("Path too long.");
+            return;
+        }
+        memcpy(directory, ctx->paste_conflict_path, dir_len);
+        directory[dir_len] = '\0';
+
+        char new_name[FS_NAV_MAX_NAME];
+        err = file_browser_generate_copy_name(directory, ctx->paste_conflict_name, new_name, sizeof(new_name));
+        if (err != ESP_OK) {
+            file_browser_hide_loading(ctx);
+            file_browser_show_message("Could not generate a new name.");
+            return;
+        }
+
+        char dest_path[FS_NAV_MAX_PATH];
+        int needed = snprintf(dest_path, sizeof(dest_path), "%s/%s", directory, new_name);
+        if (needed < 0 || needed >= (int)sizeof(dest_path)) {
+            file_browser_hide_loading(ctx);
+            file_browser_show_message("Path too long.");
+            return;
+        }
+        err = file_browser_perform_paste(ctx, dest_path, false);
+    } else {
+        file_browser_hide_loading(ctx);
+        return;
+    }
+    file_browser_hide_loading(ctx);
+
+    if (err != ESP_OK) {
+        file_browser_show_message(esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
+        return;
+    }
+
+    err = file_browser_reload();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to refresh after paste: %s", esp_err_to_name(err));
+        sdspi_schedule_sd_retry();
+    }
+}
+
 static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
 {
     if (!ctx || !entry) {
@@ -1575,15 +2100,37 @@ static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
     lv_obj_set_user_data(del_btn, (void *)FILE_BROWSER_ACTION_DELETE);
     lv_obj_add_event_cb(del_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
 
+    lv_obj_t *row2 = lv_obj_create(footer);
+    lv_obj_remove_style_all(row2);
+    lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row2, 8, 0);
+
+    lv_obj_t *copy_btn = lv_button_create(row2);
+    lv_obj_set_flex_grow(copy_btn, 1);
+    lv_obj_t *copy_lbl = lv_label_create(copy_btn);
+    lv_label_set_text(copy_lbl, "Copy");
+    lv_obj_center(copy_lbl);
+    lv_obj_set_user_data(copy_btn, (void *)FILE_BROWSER_ACTION_COPY);
+    lv_obj_add_event_cb(copy_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *cut_btn = lv_button_create(row2);
+    lv_obj_set_flex_grow(cut_btn, 1);
+    lv_obj_t *cut_lbl = lv_label_create(cut_btn);
+    lv_label_set_text(cut_lbl, "Cut");
+    lv_obj_center(cut_lbl);
+    lv_obj_set_user_data(cut_btn, (void *)FILE_BROWSER_ACTION_CUT);
+    lv_obj_add_event_cb(cut_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *row3 = lv_obj_create(footer);
+    lv_obj_remove_style_all(row3);
+    lv_obj_set_size(row3, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row3, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row3, 8, 0);
+
     bool has_edit = (!ctx->action_entry.is_dir && ctx->action_entry.is_txt);
     if (has_edit) {
-        lv_obj_t *row2 = lv_obj_create(footer);
-        lv_obj_remove_style_all(row2);
-        lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_pad_gap(row2, 8, 0);
-
-        lv_obj_t *edit_btn = lv_button_create(row2);
+        lv_obj_t *edit_btn = lv_button_create(row3);
         lv_obj_set_flex_grow(edit_btn, 1);
         lv_obj_t *edit_lbl = lv_label_create(edit_btn);
         lv_label_set_text(edit_lbl, "Edit");
@@ -1591,7 +2138,7 @@ static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
         lv_obj_set_user_data(edit_btn, (void *)FILE_BROWSER_ACTION_EDIT);
         lv_obj_add_event_cb(edit_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
 
-        lv_obj_t *cancel_btn = lv_button_create(row2);
+        lv_obj_t *cancel_btn = lv_button_create(row3);
         lv_obj_set_flex_grow(cancel_btn, 1);
         lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
         lv_label_set_text(cancel_lbl, "Cancel");
@@ -1599,7 +2146,7 @@ static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
         lv_obj_set_user_data(cancel_btn, (void *)FILE_BROWSER_ACTION_CANCEL);
         lv_obj_add_event_cb(cancel_btn, file_browser_on_action_button, LV_EVENT_CLICKED, ctx);
     } else {
-        lv_obj_t *cancel_btn = lv_button_create(row1);
+        lv_obj_t *cancel_btn = lv_button_create(row3);
         lv_obj_set_flex_grow(cancel_btn, 1);
         lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
         lv_label_set_text(cancel_lbl, "Cancel");
@@ -1659,6 +2206,26 @@ static void file_browser_on_action_button(lv_event_t *e)
         case FILE_BROWSER_ACTION_DELETE:
             file_browser_show_delete_confirm(ctx);
             break;
+        case FILE_BROWSER_ACTION_COPY:
+        case FILE_BROWSER_ACTION_CUT: {
+            if (!ctx->action_entry.active) {
+                return;
+            }
+            char src_path[FS_NAV_MAX_PATH];
+            if (file_browser_action_compose_path(ctx, src_path, sizeof(src_path)) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to compose path for clipboard");
+                return;
+            }
+            memset(&ctx->clipboard, 0, sizeof(ctx->clipboard));
+            ctx->clipboard.has_item = true;
+            ctx->clipboard.cut = (action == FILE_BROWSER_ACTION_CUT);
+            ctx->clipboard.is_dir = ctx->action_entry.is_dir;
+            strlcpy(ctx->clipboard.name, ctx->action_entry.name, sizeof(ctx->clipboard.name));
+            strlcpy(ctx->clipboard.src_path, src_path, sizeof(ctx->clipboard.src_path));
+            file_browser_update_paste_button(ctx);
+            file_browser_clear_action_state(ctx);
+            break;
+        }
         case FILE_BROWSER_ACTION_CANCEL:
         default:
             file_browser_clear_action_state(ctx);
@@ -1699,6 +2266,36 @@ static void file_browser_close_delete_confirm(file_browser_ctx_t *ctx)
         lv_msgbox_close(ctx->confirm_mbox);
         ctx->confirm_mbox = NULL;
     }
+}
+
+static void file_browser_hide_loading(file_browser_ctx_t *ctx)
+{
+    if (ctx && ctx->loading_dialog) {
+        lv_msgbox_close(ctx->loading_dialog);
+        ctx->loading_dialog = NULL;
+    }
+}
+
+static void file_browser_show_loading(file_browser_ctx_t *ctx)
+{
+    if (!ctx || ctx->loading_dialog) {
+        return;
+    }
+
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    ctx->loading_dialog = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text(label, "Loading...");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    /* Force an immediate refresh so the mbox appears before heavy work. */
+    lv_obj_invalidate(mbox);
+    lv_refr_now(NULL);
 }
 
 static void file_browser_on_delete_confirm(lv_event_t *e)
