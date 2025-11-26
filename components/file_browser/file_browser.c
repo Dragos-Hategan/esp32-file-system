@@ -1252,7 +1252,11 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
         }
 
         char text[FS_NAV_MAX_NAME + 64];
-        snprintf(text, sizeof(text), "%s\nSize: %s", entry->name, meta);
+        if (!entry->is_dir){
+            snprintf(text, sizeof(text), "%s\nSize: %s", entry->name, meta);
+        }else{
+            snprintf(text, sizeof(text), "%s\n", entry->name);
+        }
 
         const char *icon = entry->is_dir
                                ? LV_SYMBOL_DIRECTORY
