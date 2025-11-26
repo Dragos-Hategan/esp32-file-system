@@ -24,7 +24,9 @@
 
 #define TAG "file_browser"
 
-#define FILE_BROWSER_MAX_ENTRIES_DEFAULT 512
+#define FILE_BROWSER_MAX_SORTABLE_ENTRIES 256  /* 0 = unlimited */
+#define FILE_BROWSER_LIST_WINDOW_SIZE    20
+#define FILE_BROWSER_LIST_WINDOW_STEP    10
 
 #define FILE_BROWSER_WAIT_STACK_SIZE_B   (6 * 1024)
 #define FILE_BROWSER_WAIT_PRIO    (4)
@@ -83,6 +85,11 @@ typedef struct {
     bool paste_target_valid;
     bool suppress_click;
     bool pending_go_parent;
+    size_t list_window_start;
+    size_t list_window_size;
+    bool list_at_top_edge;
+    bool list_at_bottom_edge;
+    bool list_suppress_scroll;
 } file_browser_ctx_t;
 
 static file_browser_ctx_t s_browser;
@@ -142,6 +149,33 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  static void file_browser_build_screen(file_browser_ctx_t *ctx);
 
 /**
+ * @brief Reset the virtual list window to the first page.
+ *
+ * @param[in,out] ctx Browser context.
+ */
+ static void file_browser_reset_window(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Rebuild the visible list window and reposition scroll.
+ *
+ * @param[in,out] ctx Browser context.
+ * @param start_index Global entry index to start the window from.
+ * @param anchor_index Global entry index to keep visible/centered (SIZE_MAX to skip).
+ * @param center_anchor True to center the anchor entry, false to align it near top.
+ * @param scroll_to_top Fallback scroll when no anchor: true = top, false = bottom.
+ */
+ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top);
+
+/**
+ * @brief Scroll list so a given global entry index is visible.
+ *
+ * @param ctx Browser context.
+ * @param global_index Entry index in navigator array.
+ * @param center True to center the entry vertically if possible.
+ */
+ static void file_browser_scroll_to_entry(file_browser_ctx_t *ctx, size_t global_index, bool center);
+
+/**
  * @brief Synchronize all UI elements with the current navigation state.
  *
  * Updates path, sort badges, and repopulates the list with current entries.
@@ -175,8 +209,10 @@ static void file_browser_wait_for_reconnection_task(void* arg);
 /**
  * @brief Rebuild the entry list from current directory contents.
  *
- * Adds a parent navigation item (if applicable) and then one button per entry.
- * For files, a formatted size is shown; for directories, "Folder" is shown.
+ * Adds a parent navigation item (if applicable) and then renders a window of
+ * entries starting at @c ctx->list_window_start for @c ctx->list_window_size
+ * items (clamped to available entries). For files, a formatted size is shown;
+ * for directories, "Folder" is shown.
  *
  * @param[in,out] ctx Browser context.
  */
@@ -221,6 +257,13 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
  */
  static void file_browser_on_entry_click(lv_event_t *e);
+
+/**
+ * @brief Scroll handler for the entry list (virtual window paging).
+ *
+ * @param e LVGL event (LV_EVENT_SCROLL) with user data = @c file_browser_ctx_t*.
+ */
+ static void file_browser_on_list_scrolled(lv_event_t *e);
 
 /**
  * @brief Show an informational prompt for unsupported file formats.
@@ -840,7 +883,7 @@ esp_err_t file_browser_start(void)
 
     file_browser_config_t browser_cfg = {
         .root_path = CONFIG_SDSPI_MOUNT_POINT,
-        .max_entries = 512,
+        .max_entries = FILE_BROWSER_MAX_SORTABLE_ENTRIES,
     };
 
     if (!browser_cfg.root_path) {
@@ -851,10 +894,11 @@ esp_err_t file_browser_start(void)
     file_browser_ctx_t *ctx = &s_browser;
     memset(ctx, 0, sizeof(*ctx));
     file_browser_clear_action_state(ctx);
+    file_browser_reset_window(ctx);
 
     fs_nav_config_t nav_cfg = {
         .root_path = browser_cfg.root_path,
-        .max_entries = browser_cfg.max_entries ? browser_cfg.max_entries : FILE_BROWSER_MAX_ENTRIES_DEFAULT,
+        .max_entries = browser_cfg.max_entries ? browser_cfg.max_entries : FILE_BROWSER_MAX_SORTABLE_ENTRIES,
     };
 
     esp_err_t nav_err = fs_nav_init(&ctx->nav, &nav_cfg);
@@ -909,6 +953,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     ctx->sort_mode_label = lv_label_create(sort_mode_btn);
     lv_label_set_text(ctx->sort_mode_label, "Name");
     lv_obj_set_style_text_align(ctx->sort_mode_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_user_data(sort_mode_btn, (void *)1); /* mark for enable/disable */
 
     lv_obj_t *sort_dir_btn = lv_button_create(header);
     lv_obj_set_style_radius(sort_dir_btn, 6, 0);
@@ -917,6 +962,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     ctx->sort_dir_label = lv_label_create(sort_dir_btn);
     lv_label_set_text(ctx->sort_dir_label, LV_SYMBOL_UP);
     lv_obj_set_style_text_align(ctx->sort_dir_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_user_data(sort_dir_btn, (void *)1); /* mark for enable/disable */
 
     lv_obj_t *new_txt_btn = lv_button_create(header);
     lv_obj_set_style_radius(new_txt_btn, 6, 0);
@@ -947,6 +993,100 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_flex_grow(ctx->list, 1);
     lv_obj_set_size(ctx->list, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_pad_all(ctx->list, 0, 0);
+    lv_obj_add_event_cb(ctx->list, file_browser_on_list_scrolled, LV_EVENT_SCROLL, ctx);
+}
+
+static void file_browser_reset_window(file_browser_ctx_t *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+    ctx->list_window_start = 0;
+    ctx->list_window_size = FILE_BROWSER_LIST_WINDOW_SIZE;
+    ctx->list_at_top_edge = false;
+    ctx->list_at_bottom_edge = false;
+    ctx->list_suppress_scroll = false;
+}
+
+static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top)
+{
+    if (!ctx || !ctx->list) {
+        return;
+    }
+
+    esp_err_t werr = fs_nav_set_window(&ctx->nav, start_index, ctx->list_window_size);
+    if (werr != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set window: %s", esp_err_to_name(werr));
+        return;
+    }
+
+    ctx->list_window_start = fs_nav_window_start(&ctx->nav);
+    ctx->list_at_top_edge = false;
+    ctx->list_at_bottom_edge = false;
+
+    bool prev_suppress = ctx->list_suppress_scroll;
+    ctx->list_suppress_scroll = true;
+    file_browser_populate_list(ctx);
+
+    if (anchor_index != SIZE_MAX) {
+        file_browser_scroll_to_entry(ctx, anchor_index, center_anchor);
+    } else {
+        if (scroll_to_top) {
+            lv_obj_scroll_to_y(ctx->list, 0, LV_ANIM_OFF);
+        } else {
+            lv_point_t end = {0};
+            lv_obj_get_scroll_end(ctx->list, &end);
+            lv_obj_scroll_to(ctx->list, end.x, end.y, LV_ANIM_OFF);
+        }
+    }
+
+    ctx->list_suppress_scroll = prev_suppress;
+}
+
+static void file_browser_scroll_to_entry(file_browser_ctx_t *ctx, size_t global_index, bool center)
+{
+    if (!ctx || !ctx->list) {
+        return;
+    }
+
+    size_t count = 0;
+    fs_nav_entries(&ctx->nav, &count);
+    if (global_index >= count) {
+        return;
+    }
+
+    size_t window_size = ctx->list_window_size ? ctx->list_window_size : FILE_BROWSER_LIST_WINDOW_SIZE;
+    size_t start = ctx->list_window_start;
+    if (global_index < start || global_index >= start + window_size) {
+        return;
+    }
+
+    size_t relative = global_index - start;
+    bool has_parent = fs_nav_can_go_parent(&ctx->nav);
+    size_t child_idx = relative + (has_parent ? 1 : 0);
+    lv_obj_t *child = lv_obj_get_child(ctx->list, child_idx);
+    if (!child) {
+        return;
+    }
+
+    lv_coord_t target_y;
+    if (center) {
+        lv_coord_t list_h = lv_obj_get_height(ctx->list);
+        lv_coord_t child_y = lv_obj_get_y(child);
+        lv_coord_t child_h = lv_obj_get_height(child);
+        target_y = child_y + child_h / 2 - list_h / 2;
+        if (target_y < 0) {
+            target_y = 0;
+        }
+        lv_point_t end = {0};
+        lv_obj_get_scroll_end(ctx->list, &end);
+        if (target_y > end.y) {
+            target_y = end.y;
+        }
+    } else {
+        target_y = lv_obj_get_y(child);
+    }
+    lv_obj_scroll_to(ctx->list, 0, target_y, LV_ANIM_OFF);
 }
 
 static void file_browser_schedule_wait_for_reconnection(void)
@@ -997,9 +1137,10 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     if (!ctx->screen) {
         return;
     }
+    file_browser_reset_window(ctx);
     file_browser_update_path_label(ctx);
     file_browser_update_sort_badges(ctx);
-    file_browser_populate_list(ctx);
+    file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
     file_browser_update_paste_button(ctx);
 }
 
@@ -1011,8 +1152,29 @@ static void file_browser_update_path_label(file_browser_ctx_t *ctx)
 
 static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)
 {
-    lv_label_set_text(ctx->sort_mode_label, file_browser_sort_mode_text(fs_nav_get_sort(&ctx->nav)));
-    lv_label_set_text(ctx->sort_dir_label, fs_nav_is_sort_ascending(&ctx->nav) ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
+    /* Buttons are the parents of labels */
+    lv_obj_t *sort_mode_btn = ctx->sort_mode_label ? lv_obj_get_parent(ctx->sort_mode_label) : NULL;
+    lv_obj_t *sort_dir_btn = ctx->sort_dir_label ? lv_obj_get_parent(ctx->sort_dir_label) : NULL;
+
+    if (fs_nav_is_sort_enabled(&ctx->nav)) {
+        lv_label_set_text(ctx->sort_mode_label, file_browser_sort_mode_text(fs_nav_get_sort(&ctx->nav)));
+        lv_label_set_text(ctx->sort_dir_label, fs_nav_is_sort_ascending(&ctx->nav) ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
+        if (sort_mode_btn) {
+            lv_obj_clear_state(sort_mode_btn, LV_STATE_DISABLED);
+        }
+        if (sort_dir_btn) {
+            lv_obj_clear_state(sort_dir_btn, LV_STATE_DISABLED);
+        }
+    } else {
+        lv_label_set_text(ctx->sort_mode_label, "Unsorted");
+        lv_label_set_text(ctx->sort_dir_label, "-");
+        if (sort_mode_btn) {
+            lv_obj_add_state(sort_mode_btn, LV_STATE_DISABLED);
+        }
+        if (sort_dir_btn) {
+            lv_obj_add_state(sort_dir_btn, LV_STATE_DISABLED);
+        }
+    }
 }
 
 static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode)
@@ -1048,6 +1210,7 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
     }
 
     for (size_t i = 0; i < count; ++i) {
+        fs_nav_ensure_meta(&ctx->nav, i);
         const fs_nav_entry_t *entry = &entries[i];
         char meta[32];
         if (entry->is_dir) {
@@ -1189,6 +1352,8 @@ static esp_err_t file_browser_reload(void)
         return err;
     }
 
+    file_browser_reset_window(ctx);
+
     if (!bsp_display_lock(0)) {
         return ESP_ERR_TIMEOUT;
     }
@@ -1294,8 +1459,12 @@ static void file_browser_on_entry_click(lv_event_t *e)
     }
 
     const fs_nav_entry_t *entry = &entries[index];
+    fs_nav_ensure_meta(&ctx->nav, index);
+    entry = &entries[index];
     if (entry->is_dir) {
+        file_browser_show_loading(ctx);
         esp_err_t err = fs_nav_enter(&ctx->nav, index);
+        file_browser_hide_loading(ctx);
         if (err == ESP_OK) {
             file_browser_sync_view(ctx);
         } else {
@@ -1333,6 +1502,62 @@ static void file_browser_on_entry_click(lv_event_t *e)
     file_browser_show_unsupported_prompt();
 }
 
+static void file_browser_on_list_scrolled(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || ctx->list_suppress_scroll) {
+        return;
+    }
+
+    bool at_top = lv_obj_get_scroll_top(ctx->list) <= 0;
+    bool at_bottom = lv_obj_get_scroll_bottom(ctx->list) <= 0;
+
+    size_t total = fs_nav_total_entries(&ctx->nav);
+
+    size_t window_size = ctx->list_window_size ? ctx->list_window_size : FILE_BROWSER_LIST_WINDOW_SIZE;
+    if (window_size == 0) {
+        window_size = FILE_BROWSER_LIST_WINDOW_SIZE;
+    }
+    size_t step = FILE_BROWSER_LIST_WINDOW_STEP;
+
+    if (at_bottom && !ctx->list_at_bottom_edge) {
+        ctx->list_at_bottom_edge = true;
+        size_t current_count = 0;
+        fs_nav_entries(&ctx->nav, &current_count);
+        size_t available_end = ctx->list_window_start + current_count;
+        if (total > window_size && available_end < total) {
+            size_t max_start = (total > window_size) ? (total - window_size) : 0;
+            size_t new_start = ctx->list_window_start + step;
+            if (new_start > max_start) {
+                new_start = max_start;
+            }
+            size_t overlap = (window_size > step) ? (window_size - step) : 0;
+            size_t boundary = new_start + overlap;
+            if (boundary >= total) {
+                boundary = total ? (total - 1) : 0;
+            }
+            file_browser_apply_window(ctx, new_start, boundary, true, true);
+        }
+    } else if (!at_bottom) {
+        ctx->list_at_bottom_edge = false;
+    }
+
+    if (at_top && !ctx->list_at_top_edge) {
+        ctx->list_at_top_edge = true;
+        if (total > window_size && ctx->list_window_start > 0) {
+            size_t prev_start = ctx->list_window_start;
+            size_t new_start = (ctx->list_window_start > step) ? (ctx->list_window_start - step) : 0;
+            size_t boundary = prev_start;
+            if (boundary >= total) {
+                boundary = total ? (total - 1) : 0;
+            }
+            file_browser_apply_window(ctx, new_start, boundary, true, false);
+        }
+    } else if (!at_top) {
+        ctx->list_at_top_edge = false;
+    }
+}
+
 static void file_browser_on_entry_long_press(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1351,6 +1576,8 @@ static void file_browser_on_entry_long_press(lv_event_t *e)
         return;
     }
 
+    fs_nav_ensure_meta(&ctx->nav, index);
+    entries = fs_nav_entries(&ctx->nav, &count);
     const fs_nav_entry_t *entry = &entries[index];
     file_browser_prepare_action_entry(ctx, entry);
     file_browser_show_action_menu(ctx);
@@ -1386,7 +1613,8 @@ static void file_browser_on_sort_mode_click(lv_event_t *e)
 
     if (fs_nav_set_sort(&ctx->nav, mode, fs_nav_is_sort_ascending(&ctx->nav)) == ESP_OK) {
         file_browser_update_sort_badges(ctx);
-        file_browser_populate_list(ctx);
+        file_browser_reset_window(ctx);
+        file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
     }
 }
 
@@ -1400,7 +1628,8 @@ static void file_browser_on_sort_dir_click(lv_event_t *e)
     bool ascending = fs_nav_is_sort_ascending(&ctx->nav);
     if (fs_nav_set_sort(&ctx->nav, fs_nav_get_sort(&ctx->nav), !ascending) == ESP_OK) {
         file_browser_update_sort_badges(ctx);
-        file_browser_populate_list(ctx);
+        file_browser_reset_window(ctx);
+        file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
     }
 }
 

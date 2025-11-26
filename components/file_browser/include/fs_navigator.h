@@ -21,8 +21,9 @@ typedef enum {
 } fs_nav_sort_mode_t;
 
 typedef struct {
-    char name[FS_NAV_MAX_NAME];
+    char *name;
     bool is_dir;
+    bool needs_stat;
     size_t size_bytes;
     time_t modified;
 } fs_nav_entry_t;
@@ -32,11 +33,15 @@ typedef struct fs_nav {
     char current[FS_NAV_MAX_PATH];
     char relative[FS_NAV_MAX_PATH];
     fs_nav_entry_t *entries;
-    size_t entry_count;
-    size_t capacity;
-    size_t max_entries;
+    size_t entry_count;      /* number of entries currently loaded in buffer */
+    size_t capacity;         /* allocated capacity of buffer */
+    size_t max_entries;      /* threshold for enabling sort (0 = no threshold) */
+    size_t total_entries;    /* full count in current directory */
+    size_t window_start;     /* current window offset */
+    size_t window_size;      /* desired window size */
     fs_nav_sort_mode_t sort_mode;
     bool ascending;
+    bool sort_enabled;
 } fs_nav_t;
 
 typedef struct {
@@ -68,9 +73,11 @@ esp_err_t fs_nav_init(fs_nav_t *nav, const fs_nav_config_t *cfg);
 void fs_nav_deinit(fs_nav_t *nav);
 
 /**
- * @brief Rescan the current directory and rebuild the entry array (sorted).
+ * @brief Rescan the current directory and refresh navigator state.
  *
- * Applies @c nav->max_entries limit if non-zero and sorts entries according to current mode.
+ * Computes @c total_entries. If @c total_entries <= @c max_entries (or @c max_entries==0),
+ * sorting stays enabled and all entries are loaded/sorted. Otherwise, sorting is disabled and
+ * only the first window is loaded; additional windows must be fetched via @c fs_nav_set_window().
  *
  * @param[in,out] nav Navigator.
  * @return
@@ -82,12 +89,16 @@ void fs_nav_deinit(fs_nav_t *nav);
 esp_err_t fs_nav_refresh(fs_nav_t *nav);
 
 /**
- * @brief Get a pointer to the internal entries array.
+ * @brief Get a pointer to the currently loaded entries window.
+ *
+ * When sorting is enabled, returns a slice starting at @c window_start of length
+ * up to @c window_size. When sorting is disabled, returns the last window loaded
+ * via @c fs_nav_set_window().
  *
  * @param[in]  nav   Navigator.
- * @param[out] count Optional; set to number of valid entries.
- * @return Pointer to internal array (NULL if @p nav is NULL).
- * @warning The pointer becomes invalid after @c fs_nav_refresh or sort changes.
+ * @param[out] count Optional; set to number of valid entries in the window.
+ * @return Pointer to internal array (NULL if unavailable).
+ * @warning The pointer becomes invalid after @c fs_nav_refresh, @c fs_nav_set_window or sort changes.
  */
 const fs_nav_entry_t *fs_nav_entries(const fs_nav_t *nav, size_t *count);
 
@@ -164,6 +175,47 @@ fs_nav_sort_mode_t fs_nav_get_sort(const fs_nav_t *nav);
 bool fs_nav_is_sort_ascending(const fs_nav_t *nav);
 
 /**
+ * @brief Check if sorting is currently enabled (total_entries <= max_entries or max_entries==0).
+ */
+bool fs_nav_is_sort_enabled(const fs_nav_t *nav);
+
+/**
+ * @brief Set the current window (offset + size) to load for the directory listing.
+ *
+ * When sorting is enabled (entry count <= max_entries), only the view window is adjusted.
+ * When sorting is disabled (entry count > max_entries or max_entries==0), this will reload
+ * just the requested window from the filesystem without holding all entries.
+ *
+ * @param nav   Navigator.
+ * @param start Zero-based offset into the directory entries.
+ * @param size  Number of entries to load (must be >0).
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG on bad params; ESP_FAIL on I/O errors;
+ *         ESP_ERR_NO_MEM on allocation failure.
+ */
+esp_err_t fs_nav_set_window(fs_nav_t *nav, size_t start, size_t size);
+
+/**
+ * @brief Get total number of entries in current directory.
+ */
+size_t fs_nav_total_entries(const fs_nav_t *nav);
+
+/**
+ * @brief Get current window start offset.
+ */
+size_t fs_nav_window_start(const fs_nav_t *nav);
+
+/**
+ * @brief Ensure metadata (is_dir, size, mtime) is populated for a given entry in the current window.
+ *
+ * Performs stat() lazily when @c needs_stat is true.
+ *
+ * @param[in,out] nav   Navigator.
+ * @param[in]     index Zero-based index into the current window returned by @c fs_nav_entries().
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG on bad inputs; ESP_FAIL on stat errors.
+ */
+esp_err_t fs_nav_ensure_meta(fs_nav_t *nav, size_t index);
+
+/**
  * @brief Compose an absolute path by appending @p entry_name to the current directory.
  *
  * @param[in]  nav         Navigator (must be initialized).
@@ -173,6 +225,17 @@ bool fs_nav_is_sort_ascending(const fs_nav_t *nav);
  * @return ESP_OK on success, ESP_ERR_INVALID_ARG on bad inputs, ESP_ERR_INVALID_SIZE if buffer is too small.
  */
 esp_err_t fs_nav_compose_path(const fs_nav_t *nav, const char *entry_name, char *out, size_t out_len);
+
+/**
+ * @brief Ensure metadata (is_dir, size, mtime) is populated for a given entry.
+ *
+ * Performs stat() lazily if @c needs_stat is true.
+ *
+ * @param[in,out] nav   Navigator.
+ * @param[in]     index Entry index (0-based).
+ * @return ESP_OK on success; ESP_ERR_INVALID_ARG on bad inputs; ESP_FAIL on stat errors.
+ */
+esp_err_t fs_nav_ensure_meta(fs_nav_t *nav, size_t index);
 
 #ifdef __cplusplus
 }
