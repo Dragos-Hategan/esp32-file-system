@@ -642,7 +642,7 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
 
     ctx->path_label = lv_label_create(scr);
     lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(ctx->path_label, "");
+    lv_label_set_text(ctx->path_label, "Path: ");
 
     ctx->text_area = lv_textarea_create(scr);
     lv_obj_set_flex_grow(ctx->text_area, 1);

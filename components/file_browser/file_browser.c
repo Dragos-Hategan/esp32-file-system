@@ -926,8 +926,8 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
     //lv_obj_set_style_bg_color(scr, lv_color_hex(0x101218), 0);
-    lv_obj_set_style_pad_all(scr, 5, 0);
-    lv_obj_set_style_pad_gap(scr, 10, 0);
+    lv_obj_set_style_pad_all(scr, 2, 0);
+    lv_obj_set_style_pad_gap(scr, 5, 0);
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
     ctx->screen = scr;
 
@@ -935,16 +935,11 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_remove_style_all(header);
     lv_obj_set_size(header, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_gap(header, 10, 0);
+    lv_obj_set_style_pad_gap(header, 3, 0);
     /* MIGHT BE CHANGED */
     lv_obj_set_style_bg_color(header, lv_color_hex(0x00ff00), 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
     /* MIGHT BE CHANGED */
-
-    ctx->path_label = lv_label_create(header);
-    lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_obj_set_flex_grow(ctx->path_label, 1);
-    lv_label_set_text(ctx->path_label, "-");
 
     lv_obj_t *sort_mode_btn = lv_button_create(header);
     lv_obj_set_style_radius(sort_mode_btn, 6, 0);
@@ -988,6 +983,10 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_label_set_text(ctx->paste_label, "Paste");
     lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
     file_browser_update_paste_button(ctx);
+
+    ctx->path_label = lv_label_create(scr);
+    lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_text(ctx->path_label, "Path: ");
 
     ctx->list = lv_list_create(scr);
     lv_obj_set_flex_grow(ctx->list, 1);
