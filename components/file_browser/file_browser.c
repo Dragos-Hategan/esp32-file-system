@@ -63,6 +63,7 @@ typedef struct {
     lv_obj_t *path_label;
     lv_obj_t *sort_mode_label;
     lv_obj_t *sort_dir_label;
+    lv_obj_t *parent_btn;
     lv_obj_t *list;
     lv_obj_t *folder_dialog;
     lv_obj_t *folder_textarea;
@@ -182,7 +183,14 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  *
  * @param[in,out] ctx Browser context.
  */
- static void file_browser_sync_view(file_browser_ctx_t *ctx);
+static void file_browser_sync_view(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Show/hide the parent navigation button depending on hierarchy depth.
+ *
+ * @param[in,out] ctx Browser context.
+ */
+static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
 
 /**
  * @brief Update the path label from the current navigator path.
@@ -209,10 +217,11 @@ static void file_browser_wait_for_reconnection_task(void* arg);
 /**
  * @brief Rebuild the entry list from current directory contents.
  *
- * Adds a parent navigation item (if applicable) and then renders a window of
- * entries starting at @c ctx->list_window_start for @c ctx->list_window_size
- * items (clamped to available entries). For files, a formatted size is shown;
- * for directories, the number of immediate children is shown.
+ * Renders a window of entries starting at @c ctx->list_window_start for
+ * @c ctx->list_window_size items (clamped to available entries). For files, a
+ * formatted size is shown; for directories, the number of immediate children
+ * is shown. The parent entry is rendered separately above the list (when
+ * available).
  *
  * @param[in,out] ctx Browser context.
  */
@@ -1017,6 +1026,16 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(ctx->path_label, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(ctx->path_label, "/");
 
+    ctx->parent_btn = lv_button_create(scr);
+    lv_obj_set_size(ctx->parent_btn, LV_PCT(50), LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(ctx->parent_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->parent_btn, 5, 0);
+    lv_obj_add_event_cb(ctx->parent_btn, file_browser_on_parent_click, LV_EVENT_CLICKED, ctx);
+    lv_obj_t *parent_lbl = lv_label_create(ctx->parent_btn);
+    lv_label_set_text(parent_lbl, LV_SYMBOL_UP " ../ <- Parent Folder");
+    lv_obj_set_style_text_align(parent_lbl, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_add_flag(ctx->parent_btn, LV_OBJ_FLAG_HIDDEN);
+
     ctx->list = lv_list_create(scr);
     lv_obj_set_flex_grow(ctx->list, 1);
     lv_obj_set_size(ctx->list, LV_PCT(100), LV_PCT(100));
@@ -1090,9 +1109,7 @@ static void file_browser_scroll_to_entry(file_browser_ctx_t *ctx, size_t global_
     }
 
     size_t relative = global_index - start;
-    bool has_parent = fs_nav_can_go_parent(&ctx->nav);
-    size_t child_idx = relative + (has_parent ? 1 : 0);
-    lv_obj_t *child = lv_obj_get_child(ctx->list, child_idx);
+    lv_obj_t *child = lv_obj_get_child(ctx->list, relative);
     if (!child) {
         return;
     }
@@ -1167,9 +1184,23 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     }
     file_browser_reset_window(ctx);
     file_browser_update_path_label(ctx);
+    file_browser_update_parent_button(ctx);
     file_browser_update_sort_badges(ctx);
     file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
     file_browser_update_paste_button(ctx);
+}
+
+static void file_browser_update_parent_button(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->parent_btn) {
+        return;
+    }
+
+    if (fs_nav_can_go_parent(&ctx->nav)) {
+        lv_obj_clear_flag(ctx->parent_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(ctx->parent_btn, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
@@ -1242,11 +1273,6 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
 {
     lv_obj_clean(ctx->list);
 
-    if (fs_nav_can_go_parent(&ctx->nav)) {
-        lv_obj_t *parent_btn = lv_list_add_btn(ctx->list, LV_SYMBOL_UP, "../ <- Parent Folder");
-        lv_obj_add_event_cb(parent_btn, file_browser_on_parent_click, LV_EVENT_CLICKED, ctx);
-    }
-
     size_t count = 0;
     const fs_nav_entry_t *entries = fs_nav_entries(&ctx->nav, &count);
     if (!entries || count == 0) {
@@ -1282,6 +1308,7 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
                                : (file_browser_is_image(entry->name) ? LV_SYMBOL_IMAGE : LV_SYMBOL_FILE);
 
         lv_obj_t *btn = lv_list_add_btn(ctx->list, icon, text);
+        lv_obj_set_style_pad_all(btn, 3, LV_PART_MAIN);
         lv_obj_set_user_data(btn, (void *)(uintptr_t)i);
         lv_obj_add_event_cb(btn, file_browser_on_entry_click, LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(btn, file_browser_on_entry_long_press, LV_EVENT_LONG_PRESSED, ctx);
