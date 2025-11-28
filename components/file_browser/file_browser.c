@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 
+#include "settings.h"
 #include "fs_navigator.h"
 #include "fs_text_ops.h"
 #include "text_viewer_screen.h"
@@ -58,7 +59,6 @@ typedef enum {
 
 typedef struct {
     bool initialized;
-    bool rotated;
     fs_nav_t nav;
     lv_obj_t *screen;
     lv_obj_t *path_label;
@@ -1016,7 +1016,8 @@ esp_err_t file_browser_start(void)
         return nav_err;
     }
     ctx->initialized = true;
-    ctx->rotated = false;
+
+    init_settings();
 
     if (!bsp_display_lock(0)) {
         fs_nav_deinit(&ctx->nav);
@@ -1794,14 +1795,7 @@ static void file_browser_on_settings_click(lv_event_t *e)
         return;
     }
 
-    lv_display_t *display = lv_display_get_default();
-    if (ctx->rotated){
-        lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);
-        ctx->rotated = false;
-    }else{
-        lv_display_set_rotation(display, LV_DISPLAY_ROTATION_180);
-        ctx->rotated = true;
-    }
+    settings_rotate_screen();
 }
 
 static void file_browser_on_tools_changed(lv_event_t *e)
