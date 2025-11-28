@@ -212,11 +212,27 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  * Adds a parent navigation item (if applicable) and then renders a window of
  * entries starting at @c ctx->list_window_start for @c ctx->list_window_size
  * items (clamped to available entries). For files, a formatted size is shown;
- * for directories, "Folder" is shown.
+ * for directories, the number of immediate children is shown.
  *
  * @param[in,out] ctx Browser context.
  */
  static void file_browser_populate_list(file_browser_ctx_t *ctx);
+
+ /**
+ * @brief Count the number of entries inside a directory.
+ *
+ * This function checks whether the given entry represents a directory,
+ * builds its full path, opens it, and counts all items inside it except
+ * the special entries "." and "..".
+ *
+ * @param[in]  ctx        File browser context. Must not be NULL.
+ * @param[in]  entry      Directory entry to inspect. Must represent a directory.
+ * @param[out] out_count  Output pointer where the number of entries will be stored.
+ *
+ * @return true on success, false on invalid parameters, path composition failure,
+ *         directory open failure, or any other error.
+ */
+ static bool file_browser_count_dir_entries(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry, size_t *out_count);
 
 /**
  * @brief Format a byte size into a short human-friendly string.
@@ -1244,18 +1260,21 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
     for (size_t i = 0; i < count; ++i) {
         fs_nav_ensure_meta(&ctx->nav, i);
         const fs_nav_entry_t *entry = &entries[i];
-        char meta[32];
-        if (entry->is_dir) {
-            strlcpy(meta, "Folder", sizeof(meta));
-        } else {
-            file_browser_format_size(entry->size_bytes, meta, sizeof(meta));
-        }
 
         char text[FS_NAV_MAX_NAME + 64];
-        if (!entry->is_dir){
+        if (!entry->is_dir) {
+            char meta[32];
+            file_browser_format_size(entry->size_bytes, meta, sizeof(meta));
             snprintf(text, sizeof(text), "%s\nSize: %s", entry->name, meta);
-        }else{
-            snprintf(text, sizeof(text), "%s\n", entry->name);
+        } else {
+            size_t child_count = 0;
+            char meta[32];
+            const char *count_label = "Unknown";
+            if (file_browser_count_dir_entries(ctx, entry, &child_count)) {
+                snprintf(meta, sizeof(meta), "%u", (unsigned int)child_count);
+                count_label = meta;
+            }
+            snprintf(text, sizeof(text), "%s\nEntries: %s", entry->name, count_label);
         }
 
         const char *icon = entry->is_dir
@@ -1267,6 +1286,36 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
         lv_obj_add_event_cb(btn, file_browser_on_entry_click, LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(btn, file_browser_on_entry_long_press, LV_EVENT_LONG_PRESSED, ctx);
     }
+}
+
+static bool file_browser_count_dir_entries(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry, size_t *out_count)
+{
+    if (!ctx || !entry || !out_count || !entry->is_dir) {
+        return false;
+    }
+
+    char path[FS_NAV_MAX_PATH];
+    if (fs_nav_compose_path(&ctx->nav, entry->name, path, sizeof(path)) != ESP_OK) {
+        return false;
+    }
+
+    DIR *dir = opendir(path);
+    if (!dir) {
+        return false;
+    }
+
+    size_t count = 0;
+    struct dirent *dent = NULL;
+    while ((dent = readdir(dir)) != NULL) {
+        if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) {
+            continue;
+        }
+        count++;
+    }
+    closedir(dir);
+
+    *out_count = count;
+    return true;
 }
 
 static void file_browser_format_size(size_t bytes, char *out, size_t out_len)
