@@ -93,9 +93,23 @@ esp_err_t init_touch(void)
             .interrupt = 0 // IRQ active LOW on XPT2046
         },
         .flags = {
-            .swap_xy = CONFIG_TOUCH_SWAP_XY ? 1 : 0,
-            .mirror_x = CONFIG_TOUCH_MIRROR_X ? 1 : 0,
-            .mirror_y = CONFIG_TOUCH_MIRROR_Y ? 1 : 0,
+#ifdef CONFIG_TOUCH_SWAP_XY            
+            .swap_xy =  1 ,
+#else
+            .swap_xy =  0,
+#endif
+
+#ifdef CONFIG_TOUCH_MIRROR_X            
+            .mirror_x =  1 ,
+#else
+            .mirror_x =  0,
+#endif
+
+#ifdef CONFIG_TOUCH_MIRROR_Y            
+            .mirror_y =  1 ,
+#else
+            .mirror_y =  0,
+#endif
         },
     };
     touch_init_err = esp_lcd_touch_new_spi_xpt2046(tp_io, &tp_cfg, &touch_handle);
