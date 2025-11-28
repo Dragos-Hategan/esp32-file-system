@@ -61,8 +61,11 @@ typedef struct {
     fs_nav_t nav;
     lv_obj_t *screen;
     lv_obj_t *path_label;
-    lv_obj_t *sort_mode_label;
-    lv_obj_t *sort_dir_label;
+    lv_obj_t *settings_btn;
+    lv_obj_t *tools_dd;
+    lv_obj_t *sort_panel;
+    lv_obj_t *sort_criteria_dd;
+    lv_obj_t *sort_direction_dd;
     lv_obj_t *parent_btn;
     lv_obj_t *list;
     lv_obj_t *folder_dialog;
@@ -70,6 +73,8 @@ typedef struct {
     lv_obj_t *folder_keyboard;
     lv_obj_t *paste_btn;
     lv_obj_t *paste_label;
+    lv_obj_t *cancel_paste_btn;
+    lv_obj_t *cancel_paste_label;
     lv_obj_t *action_mbox;
     lv_obj_t *confirm_mbox;
     lv_obj_t *paste_conflict_mbox;
@@ -140,9 +145,10 @@ static void file_browser_schedule_wait_for_reconnection(void);
 static void file_browser_wait_for_reconnection_task(void* arg);
 
 /**
- * @brief Build the LVGL screen hierarchy (header + list).
+ * @brief Build the LVGL screen hierarchy (header + optional sort panel + list).
  *
- * Creates the root screen and child widgets (path label, sort buttons, list).
+ * Creates the root screen and child widgets (path label, settings/tools/paste
+ * header, optional sort panel, parent button, and entry list).
  *
  * @param[in,out] ctx Browser context (must be non-NULL).
  * @internal UI construction only; does not query filesystem.
@@ -205,14 +211,6 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
  * @param[in,out] ctx Browser context.
  */
  static void file_browser_update_sort_badges(file_browser_ctx_t *ctx);
-
-/**
- * @brief Convert a sort mode enum to human-readable text.
- *
- * @param mode Sort mode.
- * @return Constant C-string: "Name", "Date", or "Size".
- */
- static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode);
 
 /**
  * @brief Rebuild the entry list from current directory contents.
@@ -342,14 +340,87 @@ static void file_browser_show_jpeg_unsupported_prompt(void);
  *
  * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
  */
- static void file_browser_on_sort_mode_click(lv_event_t *e);
 
 /**
- * @brief Sort-direction button handler: toggle ascending/descending and refresh list.
+ * @brief Tools dropdown handler (Sort / New TXT / New Folder).
  *
- * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
+ * @param e LVGL event (VALUE_CHANGED) with user data = @c file_browser_ctx_t*.
  */
- static void file_browser_on_sort_dir_click(lv_event_t *e);
+static void file_browser_on_tools_changed(lv_event_t *e);
+
+/**
+ * @brief Sort criteria dropdown handler.
+ *
+ * Triggered when the user changes the sorting field (e.g., name, size, date).
+ * Only retrieves the context; actual application happens on "Apply".
+ *
+ * @param e LVGL event (e.g., LV_EVENT_VALUE_CHANGED) with user data = @c file_browser_ctx_t*.
+ */
+static void file_browser_on_sort_criteria_changed(lv_event_t *e);
+
+/**
+ * @brief Sort direction dropdown handler.
+ *
+ * Triggered when the user switches between ascending/descending sorting.
+ * Only retrieves the context; actual application happens on "Apply".
+ *
+ * @param e LVGL event (e.g., LV_EVENT_VALUE_CHANGED) with user data = @c file_browser_ctx_t*.
+ */
+static void file_browser_on_sort_direction_changed(lv_event_t *e);
+
+/**
+ * @brief Apply the selected sorting mode to the file browser.
+ *
+ * Updates the navigator sorting mode and direction, refreshes sort badges,
+ * resets the list window, and repopulates the visible file list.
+ *
+ * @param ctx File browser context owning sorting state and UI elements.
+ * @param mode Sorting mode to apply (name/date/size).
+ * @param ascending True for ascending order, false for descending.
+ */
+static void file_browser_apply_sort(file_browser_ctx_t *ctx, fs_nav_sort_mode_t mode, bool ascending);
+
+/**
+ * @brief Display the sorting dialog overlay.
+ *
+ * Creates a modal dialog containing sort criteria and direction dropdowns,
+ * along with "Apply" and "Cancel" actions. Automatically closes any existing
+ * sort panel before creating a new one.
+ *
+ * @param ctx File browser context used to populate and manage the dialog.
+ */
+static void file_browser_show_sort_dialog(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Close and destroy the sorting dialog.
+ *
+ * Removes the overlay dialog from screen, clears dialog-related pointers,
+ * and resets internal dialog state.
+ *
+ * @param ctx File browser context that owns the dialog instance.
+ */
+static void file_browser_close_sort_dialog(file_browser_ctx_t *ctx);
+
+/**
+ * @brief "Apply" button handler for the sort dialog.
+ *
+ * Reads the selected sort criteria and direction from dropdowns,
+ * updates the navigator sorting state, refreshes the file list,
+ * and closes the sort dialog.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
+static void file_browser_on_sort_apply(lv_event_t *e);
+
+/**
+ * @brief "Cancel" button handler for the sort dialog.
+ *
+ * Closes the sort dialog without applying any changes
+ * and updates the sort badges in the toolbar.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ */
+static void file_browser_on_sort_cancel(lv_event_t *e);
 
 /**
  * @brief "New TXT" button handler: open an editor for a new text file.
@@ -371,7 +442,31 @@ static void file_browser_show_jpeg_unsupported_prompt(void);
  * @param changed  True if the editor modified the file.
  * @param user_ctx User context, expected to be @c file_browser_ctx_t*.
  */
- static void file_browser_editor_closed(bool changed, void *user_ctx);
+static void file_browser_editor_closed(bool changed, void *user_ctx);
+
+/**
+ * @brief Start the "New TXT" creation flow by opening the text editor.
+ *
+ * Creates a new editable text document inside the current navigator
+ * directory. A default filename ("new_file.txt") is suggested to the
+ * editor. When the editor is closed, the file browser is notified
+ * through @c file_browser_editor_closed().
+ *
+ * On failure to open the editor, an error is logged and an SD-card
+ * retry is scheduled to handle potential transient I/O issues.
+ *
+ * @param ctx File browser context providing navigation state and UI targets.
+ */
+static void file_browser_start_new_txt(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Start the "New Folder" flow by opening the folder creation dialog.
+ *
+ * Opens the folder creation dialog for the current navigator path.
+ *
+ * @param ctx File browser context used to dispatch the dialog.
+ */
+static void file_browser_start_new_folder(file_browser_ctx_t *ctx);
 
 /**************************************************************************************************/
 
@@ -531,12 +626,13 @@ static esp_err_t file_browser_compute_total_size(const char *path, uint64_t *byt
 /*************************************** Clipboard & Paste Helpers ********************************/
 
 /**
- * @brief Update paste button state/label based on clipboard contents.
+ * @brief Update visibility and state of "Paste" and "Cancel Paste" buttons.
  *
- * Disables the paste button when the clipboard is empty; shows
- * "Paste (copy)" or "Paste (cut)" when a clipboard entry exists.
+ * When the clipboard is empty, both buttons are hidden and disabled.
+ * When a clipboard entry exists (copy or cut), both buttons are shown
+ * and enabled, allowing the user to complete or cancel the paste action.
  *
- * @param ctx Browser context owning the paste button.
+ * @param ctx File browser context that owns the paste and cancel buttons.
  */
 static void file_browser_update_paste_button(file_browser_ctx_t *ctx);
 
@@ -546,6 +642,17 @@ static void file_browser_update_paste_button(file_browser_ctx_t *ctx);
  * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
  */
 static void file_browser_on_paste_click(lv_event_t *e);
+
+/**
+ * @brief "Cancel Paste" button handler — clears clipboard and resets paste state.
+ *
+ * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
+ *
+ * This function is triggered when the user clicks the "Cancel Paste" button.
+ * It clears the current clipboard contents and updates the paste button state
+ * to reflect that no copy/move operation is in progress.
+ */
+static void file_browser_on_cancel_paste_click(lv_event_t *e);
 
 /**
  * @brief Show overwrite/rename prompt when paste destination already exists.
@@ -960,45 +1067,34 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_remove_style_all(header);
     lv_obj_set_size(header, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(header, 3, 0);
     /* MIGHT BE CHANGED */
     lv_obj_set_style_bg_color(header, lv_color_hex(0x00ff00), 0);
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
     /* MIGHT BE CHANGED */
 
-    lv_obj_t *sort_mode_btn = lv_button_create(header);
-    lv_obj_set_style_radius(sort_mode_btn, 6, 0);
-    lv_obj_set_style_pad_all(sort_mode_btn, 6, 0);
-    lv_obj_add_event_cb(sort_mode_btn, file_browser_on_sort_mode_click, LV_EVENT_CLICKED, ctx);
-    ctx->sort_mode_label = lv_label_create(sort_mode_btn);
-    lv_label_set_text(ctx->sort_mode_label, "Name");
-    lv_obj_set_style_text_align(ctx->sort_mode_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_user_data(sort_mode_btn, (void *)1); /* mark for enable/disable */
+    ctx->settings_btn = lv_button_create(header);
+    lv_obj_set_style_radius(ctx->settings_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->settings_btn, 6, 0);
+    lv_obj_t *settings_lbl = lv_label_create(ctx->settings_btn);
+    lv_label_set_text(settings_lbl, LV_SYMBOL_SETTINGS " Settings");
+    lv_obj_set_style_text_align(settings_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
-    lv_obj_t *sort_dir_btn = lv_button_create(header);
-    lv_obj_set_style_radius(sort_dir_btn, 6, 0);
-    lv_obj_set_style_pad_all(sort_dir_btn, 6, 0);
-    lv_obj_add_event_cb(sort_dir_btn, file_browser_on_sort_dir_click, LV_EVENT_CLICKED, ctx);
-    ctx->sort_dir_label = lv_label_create(sort_dir_btn);
-    lv_label_set_text(ctx->sort_dir_label, LV_SYMBOL_UP);
-    lv_obj_set_style_text_align(ctx->sort_dir_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_user_data(sort_dir_btn, (void *)1); /* mark for enable/disable */
-
-    lv_obj_t *new_txt_btn = lv_button_create(header);
-    lv_obj_set_style_radius(new_txt_btn, 6, 0);
-    lv_obj_set_style_pad_all(new_txt_btn, 6, 0);
-    lv_obj_add_event_cb(new_txt_btn, file_browser_on_new_txt_click, LV_EVENT_CLICKED, ctx);
-    lv_obj_t *new_lbl = lv_label_create(new_txt_btn);
-    lv_label_set_text(new_lbl, "New TXT");
-    lv_obj_set_style_text_align(new_lbl, LV_TEXT_ALIGN_CENTER, 0);
-
-    lv_obj_t *new_folder_btn = lv_button_create(header);
-    lv_obj_set_style_radius(new_folder_btn, 6, 0);
-    lv_obj_set_style_pad_all(new_folder_btn, 6, 0);
-    lv_obj_add_event_cb(new_folder_btn, file_browser_on_new_folder_click, LV_EVENT_CLICKED, ctx);
-    lv_obj_t *new_folder_lbl = lv_label_create(new_folder_btn);
-    lv_label_set_text(new_folder_lbl, "New Folder");
-    lv_obj_set_style_text_align(new_folder_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    ctx->tools_dd = lv_dropdown_create(header);
+    lv_dropdown_set_options_static(ctx->tools_dd, "Sort\nNew TXT\nNew Folder");
+    lv_dropdown_set_selected(ctx->tools_dd, 0);
+    lv_dropdown_set_text(ctx->tools_dd, "Tools");
+    lv_obj_set_width(ctx->tools_dd, 90);
+    lv_obj_set_style_min_width(ctx->tools_dd, 70, 0);
+    lv_obj_set_style_pad_top(ctx->tools_dd, 2, 0);
+    lv_obj_set_style_pad_bottom(ctx->tools_dd, 2, 0);
+    lv_obj_set_style_pad_left(ctx->tools_dd, 6, 0);
+    lv_obj_set_style_pad_right(ctx->tools_dd, 6, 0);
+    lv_obj_set_style_margin_left(ctx->tools_dd, 4, 0);
+    lv_obj_set_style_pad_top(ctx->tools_dd, 2, 0);
+    lv_obj_set_style_pad_bottom(ctx->tools_dd, 2, 0);
+    lv_obj_add_event_cb(ctx->tools_dd, file_browser_on_tools_changed, LV_EVENT_VALUE_CHANGED, ctx);
 
     ctx->paste_btn = lv_button_create(header);
     lv_obj_set_style_radius(ctx->paste_btn, 6, 0);
@@ -1007,6 +1103,14 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     ctx->paste_label = lv_label_create(ctx->paste_btn);
     lv_label_set_text(ctx->paste_label, "Paste");
     lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
+
+    ctx->cancel_paste_btn = lv_button_create(header);
+    lv_obj_set_style_radius(ctx->cancel_paste_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->cancel_paste_btn, 6, 0);
+    lv_obj_add_event_cb(ctx->cancel_paste_btn, file_browser_on_cancel_paste_click, LV_EVENT_CLICKED, ctx);
+    ctx->cancel_paste_label = lv_label_create(ctx->cancel_paste_btn);
+    lv_label_set_text(ctx->cancel_paste_label, "Cancel");
+    lv_obj_set_style_text_align(ctx->cancel_paste_label, LV_TEXT_ALIGN_CENTER, 0);
     file_browser_update_paste_button(ctx);
 
     lv_obj_t *path_row = lv_obj_create(scr);
@@ -1231,41 +1335,30 @@ static void file_browser_update_path_label(file_browser_ctx_t *ctx)
 
 static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)
 {
-    /* Buttons are the parents of labels */
-    lv_obj_t *sort_mode_btn = ctx->sort_mode_label ? lv_obj_get_parent(ctx->sort_mode_label) : NULL;
-    lv_obj_t *sort_dir_btn = ctx->sort_dir_label ? lv_obj_get_parent(ctx->sort_dir_label) : NULL;
+    if (!ctx) {
+        return;
+    }
 
-    if (fs_nav_is_sort_enabled(&ctx->nav)) {
-        lv_label_set_text(ctx->sort_mode_label, file_browser_sort_mode_text(fs_nav_get_sort(&ctx->nav)));
-        lv_label_set_text(ctx->sort_dir_label, fs_nav_is_sort_ascending(&ctx->nav) ? LV_SYMBOL_UP : LV_SYMBOL_DOWN);
-        if (sort_mode_btn) {
-            lv_obj_clear_state(sort_mode_btn, LV_STATE_DISABLED);
-        }
-        if (sort_dir_btn) {
-            lv_obj_clear_state(sort_dir_btn, LV_STATE_DISABLED);
-        }
-    } else {
-        lv_label_set_text(ctx->sort_mode_label, "Unsorted");
-        lv_label_set_text(ctx->sort_dir_label, "-");
-        if (sort_mode_btn) {
-            lv_obj_add_state(sort_mode_btn, LV_STATE_DISABLED);
-        }
-        if (sort_dir_btn) {
-            lv_obj_add_state(sort_dir_btn, LV_STATE_DISABLED);
+    bool sort_enabled = fs_nav_is_sort_enabled(&ctx->nav);
+    fs_nav_sort_mode_t mode = fs_nav_get_sort(&ctx->nav);
+    bool asc = fs_nav_is_sort_ascending(&ctx->nav);
+
+    if (ctx->sort_criteria_dd) {
+        lv_dropdown_set_selected(ctx->sort_criteria_dd, (uint16_t)mode);
+        if (sort_enabled) {
+            lv_obj_clear_state(ctx->sort_criteria_dd, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(ctx->sort_criteria_dd, LV_STATE_DISABLED);
         }
     }
-}
 
-static const char *file_browser_sort_mode_text(fs_nav_sort_mode_t mode)
-{
-    switch (mode) {
-        case FS_NAV_SORT_DATE:
-            return "Date";
-        case FS_NAV_SORT_SIZE:
-            return "Size";
-        case FS_NAV_SORT_NAME:
-        default:
-            return "Name";
+    if (ctx->sort_direction_dd) {
+        lv_dropdown_set_selected(ctx->sort_direction_dd, asc ? 0 : 1);
+        if (sort_enabled) {
+            lv_obj_clear_state(ctx->sort_direction_dd, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(ctx->sort_direction_dd, LV_STATE_DISABLED);
+        }
     }
 }
 
@@ -1715,41 +1808,140 @@ static void file_browser_on_parent_click(lv_event_t *e)
     file_browser_hide_loading(ctx);
 }
 
-static void file_browser_on_sort_mode_click(lv_event_t *e)
+static void file_browser_on_tools_changed(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
     if (!ctx) {
         return;
     }
 
-    fs_nav_sort_mode_t mode = fs_nav_get_sort(&ctx->nav);
-    mode = (mode + 1) % FS_NAV_SORT_COUNT;
+    static bool s_updating = false;
+    if (s_updating) {
+        return;
+    }
 
-    if (fs_nav_set_sort(&ctx->nav, mode, fs_nav_is_sort_ascending(&ctx->nav)) == ESP_OK) {
-        file_browser_update_sort_badges(ctx);
-        file_browser_reset_window(ctx);
-        file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
+    lv_obj_t *dd = lv_event_get_target(e);
+    uint16_t sel = lv_dropdown_get_selected(dd);
+
+    switch (sel) {
+        case 0: /* Sort */
+            file_browser_show_sort_dialog(ctx);
+            break;
+        case 1: file_browser_start_new_txt(ctx); break;
+        case 2: file_browser_start_new_folder(ctx); break;
+        default: break;
+    }
+
+    if (sel != 0) {
+        s_updating = true;
+        lv_dropdown_set_selected(dd, 0);
+        lv_dropdown_set_text(dd, "Tools");
+        s_updating = false;
+    }
+    else {
+        lv_dropdown_set_text(dd, "Tools");
     }
 }
 
-static void file_browser_on_sort_dir_click(lv_event_t *e)
+static void file_browser_apply_sort(file_browser_ctx_t *ctx, fs_nav_sort_mode_t mode, bool ascending)
 {
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
     if (!ctx) {
         return;
     }
 
-    bool ascending = fs_nav_is_sort_ascending(&ctx->nav);
-    if (fs_nav_set_sort(&ctx->nav, fs_nav_get_sort(&ctx->nav), !ascending) == ESP_OK) {
+    if (fs_nav_set_sort(&ctx->nav, mode, ascending) == ESP_OK) {
         file_browser_update_sort_badges(ctx);
         file_browser_reset_window(ctx);
         file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
     }
 }
 
-static void file_browser_on_new_txt_click(lv_event_t *e)
+static void file_browser_close_sort_dialog(file_browser_ctx_t *ctx)
 {
-    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->sort_panel) {
+        return;
+    }
+    lv_obj_del(ctx->sort_panel);
+    ctx->sort_panel = NULL;
+    ctx->sort_criteria_dd = NULL;
+    ctx->sort_direction_dd = NULL;
+}
+
+static void file_browser_show_sort_dialog(file_browser_ctx_t *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+    file_browser_close_sort_dialog(ctx);
+
+    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(overlay);
+    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_CLICK_FOCUSABLE);
+    ctx->sort_panel = overlay;
+
+    lv_obj_t *dlg = lv_obj_create(overlay);
+    lv_obj_set_style_pad_all(dlg, 12, 0);
+    lv_obj_set_style_radius(dlg, 8, 0);
+    lv_obj_set_style_width(dlg, LV_PCT(65), 0);
+    lv_obj_set_flex_flow(dlg, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(dlg, 8, 0);
+    lv_obj_center(dlg);
+
+    lv_obj_t *title = lv_label_create(dlg);
+    lv_label_set_text(title, "Sort");
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *row_crit = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_crit);
+    lv_obj_set_flex_flow(row_crit, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_crit, 6, 0);
+    lv_obj_set_width(row_crit, LV_PCT(100));
+    lv_obj_t *crit_lbl = lv_label_create(row_crit);
+    lv_label_set_text(crit_lbl, "Criteria:");
+    ctx->sort_criteria_dd = lv_dropdown_create(row_crit);
+    lv_dropdown_set_options_static(ctx->sort_criteria_dd, "Name\nDate\nSize");
+    lv_obj_set_width(ctx->sort_criteria_dd, 120);
+    lv_obj_add_event_cb(ctx->sort_criteria_dd, file_browser_on_sort_criteria_changed, LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *row_dir = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_dir);
+    lv_obj_set_flex_flow(row_dir, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_dir, 6, 0);
+    lv_obj_set_width(row_dir, LV_PCT(100));
+    lv_obj_t *dir_lbl = lv_label_create(row_dir);
+    lv_label_set_text(dir_lbl, "Direction:");
+    ctx->sort_direction_dd = lv_dropdown_create(row_dir);
+    lv_dropdown_set_options_static(ctx->sort_direction_dd, "Ascending\nDescending");
+    lv_obj_set_width(ctx->sort_direction_dd, 120);
+    lv_obj_add_event_cb(ctx->sort_direction_dd, file_browser_on_sort_direction_changed, LV_EVENT_VALUE_CHANGED, ctx);
+
+    lv_obj_t *actions = lv_obj_create(dlg);
+    lv_obj_remove_style_all(actions);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(actions, 8, 0);
+    lv_obj_set_width(actions, LV_PCT(100));
+
+    lv_obj_t *apply_btn = lv_button_create(actions);
+    lv_obj_set_flex_grow(apply_btn, 1);
+    lv_obj_t *apply_lbl = lv_label_create(apply_btn);
+    lv_label_set_text(apply_lbl, "Apply");
+    lv_obj_center(apply_lbl);
+    lv_obj_add_event_cb(apply_btn, file_browser_on_sort_apply, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *cancel_btn = lv_button_create(actions);
+    lv_obj_set_flex_grow(cancel_btn, 1);
+    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_obj_add_event_cb(cancel_btn, file_browser_on_sort_cancel, LV_EVENT_CLICKED, ctx);
+
+    file_browser_update_sort_badges(ctx);
+}
+
+static void file_browser_start_new_txt(file_browser_ctx_t *ctx)
+{
     if (!ctx) {
         return;
     }
@@ -1774,6 +1966,74 @@ static void file_browser_on_new_txt_click(lv_event_t *e)
     }
 }
 
+static void file_browser_start_new_folder(file_browser_ctx_t *ctx)
+{
+    if (!ctx) {
+        return;
+    }
+    file_browser_show_folder_dialog(ctx);
+}
+
+static void file_browser_on_sort_criteria_changed(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+}
+
+static void file_browser_on_sort_direction_changed(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+}
+
+static void file_browser_on_sort_apply(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    fs_nav_sort_mode_t mode = fs_nav_get_sort(&ctx->nav);
+    bool ascending = fs_nav_is_sort_ascending(&ctx->nav);
+
+    if (ctx->sort_criteria_dd) {
+        uint16_t sel = lv_dropdown_get_selected(ctx->sort_criteria_dd);
+        if (sel < FS_NAV_SORT_COUNT) {
+            mode = (fs_nav_sort_mode_t)sel;
+        }
+    }
+    if (ctx->sort_direction_dd) {
+        uint16_t sel = lv_dropdown_get_selected(ctx->sort_direction_dd);
+        ascending = (sel == 0);
+    }
+
+    file_browser_apply_sort(ctx, mode, ascending);
+    file_browser_close_sort_dialog(ctx);
+}
+
+static void file_browser_on_sort_cancel(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    file_browser_close_sort_dialog(ctx);
+    file_browser_update_sort_badges(ctx);
+}
+
+static void file_browser_on_new_txt_click(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+
+    file_browser_start_new_txt(ctx);
+}
+
 static void file_browser_editor_closed(bool changed, void *user_ctx)
 {
     file_browser_ctx_t *ctx = (file_browser_ctx_t *)user_ctx;
@@ -1794,7 +2054,7 @@ static void file_browser_on_new_folder_click(lv_event_t *e)
     if (!ctx) {
         return;
     }
-    file_browser_show_folder_dialog(ctx);
+    file_browser_start_new_folder(ctx);
 }
 
 static void file_browser_show_folder_dialog(file_browser_ctx_t *ctx)
@@ -2156,16 +2416,20 @@ static void file_browser_clear_clipboard(file_browser_ctx_t *ctx)
 
 static void file_browser_update_paste_button(file_browser_ctx_t *ctx)
 {
-    if (!ctx || !ctx->paste_btn || !ctx->paste_label) {
+    if (!ctx || !ctx->paste_btn || !ctx->paste_label || !ctx->cancel_paste_btn) {
         return;
     }
 
     if (!ctx->clipboard.has_item) {
-        lv_label_set_text(ctx->paste_label, "Paste");
+        lv_obj_add_flag(ctx->paste_btn, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_state(ctx->paste_btn, LV_STATE_DISABLED);
+        lv_obj_add_flag(ctx->cancel_paste_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_state(ctx->cancel_paste_btn, LV_STATE_DISABLED);
     } else {
-        lv_label_set_text(ctx->paste_label, ctx->clipboard.cut ? "Paste (cut)" : "Paste (copy)");
+        lv_obj_clear_flag(ctx->paste_btn, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_state(ctx->paste_btn, LV_STATE_DISABLED);
+        lv_obj_clear_flag(ctx->cancel_paste_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_state(ctx->cancel_paste_btn, LV_STATE_DISABLED);
     }
 }
 
@@ -2576,6 +2840,18 @@ static void file_browser_on_paste_conflict(lv_event_t *e)
         ESP_LOGE(TAG, "Failed to refresh after paste: %s", esp_err_to_name(err));
         sdspi_schedule_sd_retry();
     }
+}
+
+static void file_browser_on_cancel_paste_click(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+
+    if (!ctx || !ctx->cancel_paste_btn || !ctx->cancel_paste_label){
+        return;
+    }
+
+    file_browser_clear_clipboard(ctx);
+    file_browser_update_paste_button(ctx);
 }
 
 static void file_browser_close_copy_confirm(file_browser_ctx_t *ctx)

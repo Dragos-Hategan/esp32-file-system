@@ -578,7 +578,7 @@ esp_err_t text_viewer_open(const text_viewer_open_opts_t *opts)
         ctx->path[0] = '\0';
         strlcpy(ctx->directory, opts->directory, sizeof(ctx->directory));
         strlcpy(ctx->pending_name, ".txt", sizeof(ctx->pending_name));
-        text_viewer_set_path_label(ctx, NULL);
+        text_viewer_set_path_label(ctx, ctx->directory);
     }
     else
     {
