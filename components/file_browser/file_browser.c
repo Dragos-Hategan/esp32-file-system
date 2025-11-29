@@ -146,10 +146,13 @@ static void file_browser_schedule_wait_for_reconnection(void);
 static void file_browser_wait_for_reconnection_task(void* arg);
 
 /**
- * @brief Build the LVGL screen hierarchy (main_header + optional sort panel + list).
+ * @brief Build the LVGL screen hierarchy (main header + path + secondary header + list).
  *
- * Creates the root screen and child widgets (path label, settings/tools/paste
- * main_header, optional sort panel, parent button, and entry list).
+ * Creates the root screen and child widgets:
+ * - Main header with settings button and tools dropdown.
+ * - Path label of the current absolute path.
+ * - Secondary header row with parent button on the left and paste/cancel pinned to the right.
+ * - Entry list (file/folder items).
  *
  * @param[in,out] ctx Browser context (must be non-NULL).
  * @internal UI construction only; does not query filesystem.
@@ -1034,7 +1037,7 @@ esp_err_t file_browser_start(void)
 static void file_browser_build_screen(file_browser_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
-    //lv_obj_set_style_bg_color(scr, lv_color_hex(0x101218), 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x00ff0f), 0);
     lv_obj_set_style_pad_all(scr, 2, 0);
     lv_obj_set_style_pad_gap(scr, 5, 0);
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
@@ -1046,10 +1049,10 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(main_header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(main_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(main_header, 3, 0);
-    /* MIGHT BE CHANGED */
+    /* TO BE CHANGED */
     lv_obj_set_style_bg_color(main_header, lv_color_hex(0x00ff00), 0);
     lv_obj_set_style_bg_opa(main_header, LV_OPA_COVER, 0);
-    /* MIGHT BE CHANGED */
+    /* TO BE CHANGED */
 
     ctx->settings_btn = lv_button_create(main_header);
     lv_obj_set_style_radius(ctx->settings_btn, 6, 0);
@@ -1063,15 +1066,8 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_dropdown_set_options_static(ctx->tools_dd, "Sort\nNew TXT\nNew Folder");
     lv_dropdown_set_selected(ctx->tools_dd, 0);
     lv_dropdown_set_text(ctx->tools_dd, "Tools");
-    lv_obj_set_width(ctx->tools_dd, 90);
-    lv_obj_set_style_min_width(ctx->tools_dd, 70, 0);
-    lv_obj_set_style_pad_top(ctx->tools_dd, 2, 0);
-    lv_obj_set_style_pad_bottom(ctx->tools_dd, 2, 0);
-    lv_obj_set_style_pad_left(ctx->tools_dd, 6, 0);
-    lv_obj_set_style_pad_right(ctx->tools_dd, 6, 0);
-    lv_obj_set_style_margin_left(ctx->tools_dd, 4, 0);
-    lv_obj_set_style_pad_top(ctx->tools_dd, 2, 0);
-    lv_obj_set_style_pad_bottom(ctx->tools_dd, 2, 0);
+    lv_obj_set_width(ctx->tools_dd, 70);
+    lv_obj_set_style_pad_all(ctx->tools_dd, 4, 0);
     lv_obj_add_event_cb(ctx->tools_dd, file_browser_on_tools_changed, LV_EVENT_VALUE_CHANGED, ctx);
 
     lv_obj_t *path_row = lv_obj_create(scr);
