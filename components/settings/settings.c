@@ -18,8 +18,8 @@
 #define SETTINGS_ROTATION_STEPS          4
 
 #define SETTINGS_MINIMUM_BRIGHTNESS 10   /**< Lowest brightness percent to avoid black screen */
-#define STR_HELPER(x) #x
-#define STR(x) STR_HELPER(x)
+#define STR_HELPER(x)               #x
+#define STR(x)                      STR_HELPER(x)
 
 typedef struct{
     int screen_rotation_step;   /**< Current rotation step (0-3) applied to display */
