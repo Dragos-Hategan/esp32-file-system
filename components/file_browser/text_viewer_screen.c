@@ -641,14 +641,24 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
     lv_label_set_text(save_lbl, LV_SYMBOL_SAVE " Save");
     lv_obj_center(save_lbl);
 
+    lv_obj_t *status_spacer_left = lv_obj_create(toolbar);
+    lv_obj_remove_style_all(status_spacer_left);
+    lv_obj_set_flex_grow(status_spacer_left, 1);
+    lv_obj_set_height(status_spacer_left, 1);
+
     ctx->status_label = lv_label_create(toolbar);
     lv_label_set_text(ctx->status_label, "");
     lv_label_set_long_mode(ctx->status_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_flex_grow(ctx->status_label, 1);
+    lv_obj_set_style_text_align(ctx->status_label, LV_TEXT_ALIGN_CENTER, 0);
     const lv_font_t *status_font = lv_obj_get_style_text_font(ctx->status_label, LV_PART_MAIN);
     lv_coord_t status_height = status_font ? status_font->line_height : 18;
     lv_obj_set_style_min_height(ctx->status_label, status_height, 0);
     lv_obj_set_style_max_height(ctx->status_label, status_height, 0);
+
+    lv_obj_t *status_spacer_right = lv_obj_create(toolbar);
+    lv_obj_remove_style_all(status_spacer_right);
+    lv_obj_set_flex_grow(status_spacer_right, 1);
+    lv_obj_set_height(status_spacer_right, 1);
 
     lv_obj_t *path_row = lv_obj_create(scr);
     lv_obj_remove_style_all(path_row);
