@@ -84,7 +84,6 @@ typedef enum
 } text_viewer_confirm_action_t;
 
 static const char *TAG = "text_viewer";
-
 static text_viewer_ctx_t s_viewer;
 
 /************************************** UI Setup & State *************************************/

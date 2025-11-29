@@ -6,23 +6,37 @@
 #include "Domine_14.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
-#include "lvgl.h"
 #include "nvs.h"
 
 #include "calibration_xpt2046.h"
 #include "touch_xpt2046.h"
 #include "sd_card.h"
 
+#define SETTINGS_NVS_NS       "settings"
+#define SETTINGS_NVS_ROT_KEY  "rotation_step"
+#define SETTINGS_ROTATION_STEPS 4
+
 typedef struct{
     int screen_rotation_step;
 }settings_t;
 
+typedef struct{
+    bool active;                        /**< True while the settings screen is active */
+    lv_obj_t *return_screen;            /**< Screen to return to on close */
+    lv_obj_t *screen;                   /**< Root LVGL screen object */
+    lv_obj_t *toolbar;                  /**< Toolbar container */
+
+
+    settings_t settings;
+}settings_ctx_t;
+
 static settings_t s_settings;
+static settings_ctx_t s_settings_ctx;
 static const char *TAG = "settings";
 
-#define SETTINGS_NVS_NS       "settings"
-#define SETTINGS_NVS_ROT_KEY  "rotation_step"
-#define SETTINGS_ROTATION_STEPS 4
+static void settings_build_screen(settings_ctx_t *ctx);
+static void settings_on_back(lv_event_t *e);
+static void settings_close(settings_ctx_t *ctx);
 
 /**
  * @brief Initialize the Non-Volatile Storage (NVS) flash partition.
@@ -87,6 +101,11 @@ static void persist_rotation_to_nvs(void);
  */
 static void init_settings(void);
 
+/**
+ * @brief Rotate the display in 90-degree increments (0 -> 90 -> 180 -> 270 -> 0).
+ */
+static void settings_rotate_screen(lv_event_t *e);
+
 void starting_routine(void)
 {
     /* ----- Init NSV ----- */
@@ -125,11 +144,73 @@ void starting_routine(void)
     }
 }
 
-void settings_rotate_screen(void)
+esp_err_t settings_open_settings(lv_obj_t *return_screen)
 {
-    s_settings.screen_rotation_step = (s_settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
-    apply_rotation_to_display();
-    persist_rotation_to_nvs();
+    settings_ctx_t *ctx = &s_settings_ctx;
+    if (!ctx->screen){
+        ctx->return_screen = return_screen;
+        settings_build_screen(ctx);
+    }
+
+    ctx->active = true;
+    lv_screen_load(ctx->screen);
+
+    return ESP_OK;
+}
+
+static void settings_build_screen(settings_ctx_t *ctx)
+{
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(scr, 2, 0);
+    lv_obj_set_style_pad_gap(scr, 5, 0);
+    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    //lv_obj_add_event_cb(scr, settings_on_screen_clicked, LV_EVENT_CLICKED, ctx);
+    ctx->screen = scr;
+
+    lv_obj_t *toolbar = lv_obj_create(scr);
+    lv_obj_remove_style_all(toolbar);
+    lv_obj_set_size(toolbar, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(toolbar, 3, 0);
+    lv_obj_set_flex_align(toolbar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    ctx->toolbar = toolbar;    
+
+    lv_obj_t *back_btn = lv_button_create(toolbar);
+    lv_obj_set_style_radius(back_btn, 6, 0);
+    lv_obj_set_style_pad_all(back_btn, 6, 0);    
+    lv_obj_add_event_cb(back_btn, settings_on_back, LV_EVENT_CLICKED, ctx);
+    lv_obj_t *back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
+    lv_obj_center(back_lbl);
+
+    lv_obj_t *rotate_button = lv_button_create(toolbar);
+    lv_obj_set_style_radius(rotate_button, 6, 0);
+    lv_obj_set_style_pad_all(rotate_button, 6, 0);    
+    lv_obj_add_event_cb(rotate_button, settings_rotate_screen, LV_EVENT_CLICKED, ctx);
+    lv_obj_t *rotate_lbl = lv_label_create(rotate_button);
+    lv_label_set_text(rotate_lbl, "Rotate Screen");
+    lv_obj_center(rotate_lbl);    
+}
+
+static void settings_on_back(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx)
+    {
+        return;
+    }
+    settings_close(ctx);
+}
+
+static void settings_close(settings_ctx_t *ctx)
+{
+    ctx->active = false;
+    if (ctx->return_screen)
+    {
+        lv_screen_load(ctx->return_screen);
+    }    
 }
 
 static esp_err_t init_nvs(void)
@@ -248,4 +329,17 @@ static void init_settings(void)
     s_settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
     load_rotation_from_nvs();
     apply_rotation_to_display();
+}
+
+static void settings_rotate_screen(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx)
+    {
+        return;
+    }
+
+    s_settings.screen_rotation_step = (s_settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
+    apply_rotation_to_display();
+    persist_rotation_to_nvs();
 }

@@ -5,6 +5,7 @@ extern "C" {
 #endif
 
 #include "esp_err.h"
+#include "lvgl.h"
 
 /**
  * @brief Perform one-time system bring-up (NVS, display, touch, SD) and UI calibration.
@@ -17,10 +18,7 @@ extern "C" {
  */
 void starting_routine(void);
 
-/**
- * @brief Rotate the display in 90-degree increments (0 -> 90 -> 180 -> 270 -> 0).
- */
-void settings_rotate_screen(void);
+esp_err_t settings_open_settings(lv_obj_t *return_screen);
 
 #ifdef __cplusplus
 }

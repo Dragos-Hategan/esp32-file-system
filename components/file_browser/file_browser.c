@@ -355,8 +355,14 @@ static void file_browser_show_jpeg_unsupported_prompt(void);
  *
  * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
  */
- static void file_browser_on_parent_click(lv_event_t *e);
+static void file_browser_on_parent_click(lv_event_t *e);
 
+/**
+ * @brief Open the settings screen when the toolbar settings button is clicked.
+ *
+ * Retrieves the browser context from event user data, guards null pointers,
+ * and delegates to @ref settings_open_settings. Logs an error on failure.
+ */
 static void file_browser_on_settings_click(lv_event_t *e);
 
 /**
@@ -1854,11 +1860,14 @@ static void file_browser_on_parent_click(lv_event_t *e)
 static void file_browser_on_settings_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
-    if (!ctx || !ctx->screen){
+    if (!ctx || !ctx->screen || !ctx->settings_btn){
         return;
     }
 
-    settings_rotate_screen();
+    esp_err_t err = settings_open_settings(ctx->screen);
+    if (err != ESP_OK){
+        ESP_LOGE(TAG, "Failed to open settings: (%s)", esp_err_to_name(err));
+    }
 }
 
 static void file_browser_on_tools_changed(lv_event_t *e)
