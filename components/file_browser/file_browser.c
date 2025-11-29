@@ -146,10 +146,10 @@ static void file_browser_schedule_wait_for_reconnection(void);
 static void file_browser_wait_for_reconnection_task(void* arg);
 
 /**
- * @brief Build the LVGL screen hierarchy (header + optional sort panel + list).
+ * @brief Build the LVGL screen hierarchy (main_header + optional sort panel + list).
  *
  * Creates the root screen and child widgets (path label, settings/tools/paste
- * header, optional sort panel, parent button, and entry list).
+ * main_header, optional sort panel, parent button, and entry list).
  *
  * @param[in,out] ctx Browser context (must be non-NULL).
  * @internal UI construction only; does not query filesystem.
@@ -1040,18 +1040,18 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
     ctx->screen = scr;
 
-    lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(header, 3, 0);
+    lv_obj_t *main_header = lv_obj_create(scr);
+    lv_obj_remove_style_all(main_header);
+    lv_obj_set_size(main_header, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(main_header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(main_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(main_header, 3, 0);
     /* MIGHT BE CHANGED */
-    lv_obj_set_style_bg_color(header, lv_color_hex(0x00ff00), 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(main_header, lv_color_hex(0x00ff00), 0);
+    lv_obj_set_style_bg_opa(main_header, LV_OPA_COVER, 0);
     /* MIGHT BE CHANGED */
 
-    ctx->settings_btn = lv_button_create(header);
+    ctx->settings_btn = lv_button_create(main_header);
     lv_obj_set_style_radius(ctx->settings_btn, 6, 0);
     lv_obj_set_style_pad_all(ctx->settings_btn, 6, 0);
     lv_obj_t *settings_lbl = lv_label_create(ctx->settings_btn);
@@ -1059,7 +1059,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_add_event_cb(ctx->settings_btn, file_browser_on_settings_click, LV_EVENT_CLICKED, ctx);
     lv_obj_set_style_text_align(settings_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
-    ctx->tools_dd = lv_dropdown_create(header);
+    ctx->tools_dd = lv_dropdown_create(main_header);
     lv_dropdown_set_options_static(ctx->tools_dd, "Sort\nNew TXT\nNew Folder");
     lv_dropdown_set_selected(ctx->tools_dd, 0);
     lv_dropdown_set_text(ctx->tools_dd, "Tools");
@@ -1073,23 +1073,6 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_pad_top(ctx->tools_dd, 2, 0);
     lv_obj_set_style_pad_bottom(ctx->tools_dd, 2, 0);
     lv_obj_add_event_cb(ctx->tools_dd, file_browser_on_tools_changed, LV_EVENT_VALUE_CHANGED, ctx);
-
-    ctx->paste_btn = lv_button_create(header);
-    lv_obj_set_style_radius(ctx->paste_btn, 6, 0);
-    lv_obj_set_style_pad_all(ctx->paste_btn, 6, 0);
-    lv_obj_add_event_cb(ctx->paste_btn, file_browser_on_paste_click, LV_EVENT_CLICKED, ctx);
-    ctx->paste_label = lv_label_create(ctx->paste_btn);
-    lv_label_set_text(ctx->paste_label, "Paste");
-    lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
-
-    ctx->cancel_paste_btn = lv_button_create(header);
-    lv_obj_set_style_radius(ctx->cancel_paste_btn, 6, 0);
-    lv_obj_set_style_pad_all(ctx->cancel_paste_btn, 6, 0);
-    lv_obj_add_event_cb(ctx->cancel_paste_btn, file_browser_on_cancel_paste_click, LV_EVENT_CLICKED, ctx);
-    ctx->cancel_paste_label = lv_label_create(ctx->cancel_paste_btn);
-    lv_label_set_text(ctx->cancel_paste_label, "Cancel");
-    lv_obj_set_style_text_align(ctx->cancel_paste_label, LV_TEXT_ALIGN_CENTER, 0);
-    file_browser_update_paste_button(ctx);
 
     lv_obj_t *path_row = lv_obj_create(scr);
     lv_obj_remove_style_all(path_row);
@@ -1108,7 +1091,16 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(ctx->path_label, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(ctx->path_label, "/");
 
-    ctx->parent_btn = lv_button_create(scr);
+    lv_obj_t *second_header = lv_obj_create(scr);
+    lv_obj_remove_style_all(second_header);
+    lv_obj_set_size(second_header, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(second_header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(second_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(second_header, 3, 0);
+    /* MIGHT BE CHANGED */
+    /* Header row: parent on the left, paste controls pinned to the right. */
+
+    ctx->parent_btn = lv_button_create(second_header);
     lv_obj_set_size(ctx->parent_btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(ctx->parent_btn, 6, 0);
     lv_obj_set_style_pad_all(ctx->parent_btn, 5, 0);
@@ -1117,6 +1109,29 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_label_set_text(parent_lbl, LV_SYMBOL_UP " Parent Folder");
     lv_obj_set_style_text_align(parent_lbl, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_add_flag(ctx->parent_btn, LV_OBJ_FLAG_HIDDEN);
+
+    /* Spacer grows to push paste/cancel to the right edge. */
+    lv_obj_t *header_spacer = lv_obj_create(second_header);
+    lv_obj_remove_style_all(header_spacer);
+    lv_obj_set_flex_grow(header_spacer, 1);
+    lv_obj_set_height(header_spacer, 1);
+
+    ctx->paste_btn = lv_button_create(second_header);
+    lv_obj_set_style_radius(ctx->paste_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->paste_btn, 5, 0);
+    lv_obj_add_event_cb(ctx->paste_btn, file_browser_on_paste_click, LV_EVENT_CLICKED, ctx);
+    ctx->paste_label = lv_label_create(ctx->paste_btn);
+    lv_label_set_text(ctx->paste_label, "Paste");
+    lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
+
+    ctx->cancel_paste_btn = lv_button_create(second_header);
+    lv_obj_set_style_radius(ctx->cancel_paste_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->cancel_paste_btn, 5, 0);
+    lv_obj_add_event_cb(ctx->cancel_paste_btn, file_browser_on_cancel_paste_click, LV_EVENT_CLICKED, ctx);
+    ctx->cancel_paste_label = lv_label_create(ctx->cancel_paste_btn);
+    lv_label_set_text(ctx->cancel_paste_label, "Cancel");
+    lv_obj_set_style_text_align(ctx->cancel_paste_label, LV_TEXT_ALIGN_CENTER, 0);
+    file_browser_update_paste_button(ctx);
 
     ctx->list = lv_list_create(scr);
     lv_obj_set_flex_grow(ctx->list, 1);
