@@ -12,12 +12,15 @@
 #include "touch_xpt2046.h"
 #include "sd_card.h"
 
-#define SETTINGS_NVS_NS       "settings"
-#define SETTINGS_NVS_ROT_KEY  "rotation_step"
-#define SETTINGS_ROTATION_STEPS 4
+#define SETTINGS_NVS_NS                 "settings"
+#define SETTINGS_NVS_ROT_KEY            "rotation_step"
+#define SETTINGS_NVS_BRIGHTNESS_KEY     "brightness_pct"
+#define SETTINGS_ROTATION_STEPS         4
 
 typedef struct{
     int screen_rotation_step;
+    int brightness;
+    int saved_brightness;
 }settings_t;
 
 typedef struct{
@@ -25,6 +28,8 @@ typedef struct{
     lv_obj_t *return_screen;            /**< Screen to return to on close */
     lv_obj_t *screen;                   /**< Root LVGL screen object */
     lv_obj_t *toolbar;                  /**< Toolbar container */
+    lv_obj_t *brightness_label;         /**< Label showing current brightness percent */
+    lv_obj_t *brightness_slider;        /**< Slider to pick brightness percent */
     lv_obj_t * restart_confirm_mbox;    /**<  */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
@@ -59,6 +64,13 @@ static void settings_on_about(lv_event_t *e);
  * @param e LVGL event (CLICKED) with user data = overlay obj.
  */
 static void settings_on_about_close(lv_event_t *e);
+
+/**
+ * @brief Update brightness level when the slider value changes.
+ *
+ * @param e LVGL event (VALUE_CHANGED) with user data = settings_ctx_t*.
+ */
+static void settings_on_brightness_changed(lv_event_t *e);
 
 /**
  * @brief Back button handler for the settings screen.
@@ -164,6 +176,16 @@ static void load_rotation_from_nvs(void);
 static void persist_rotation_to_nvs(void);
 
 /**
+ * @brief Load persisted brightness percent from NVS (defaults to 100 if missing).
+ */
+static void load_brightness_from_nvs(void);
+
+/**
+ * @brief Persist current brightness percent to NVS.
+ */
+static void persist_brightness_to_nvs(void);
+
+/**
  * @brief Initialize runtime settings defaults.
  */
 static void init_settings(void);
@@ -184,7 +206,6 @@ void starting_routine(void)
     /* ----- Init Display and LVGL ----- */
     ESP_LOGI(TAG, "Starting bsp for ILI9341 display");
     ESP_ERROR_CHECK(bsp_display_start_result()); 
-    ESP_ERROR_CHECK(bsp_display_backlight_on()); 
     apply_default_font_theme(true);
 
     init_settings();
@@ -298,7 +319,37 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_set_style_align(restart_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *restart_lbl = lv_label_create(restart_button);
     lv_label_set_text(restart_lbl, "Restart");
-    lv_obj_center(restart_lbl);       
+    lv_obj_center(restart_lbl);
+
+    lv_obj_t *brightness_card = lv_button_create(settings_list);
+    lv_obj_set_width(brightness_card, LV_PCT(100));
+    lv_obj_set_height(brightness_card, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_all(brightness_card, 10, 0);
+    lv_obj_set_style_pad_row(brightness_card, 6, 0);
+    lv_obj_set_style_radius(brightness_card, 8, 0);
+    lv_obj_set_flex_flow(brightness_card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_align(brightness_card, LV_ALIGN_CENTER, 0);
+    lv_obj_clear_flag(brightness_card, LV_OBJ_FLAG_CLICKABLE); /* container only */
+
+    ctx->brightness_label = lv_label_create(brightness_card);
+    lv_obj_set_width(ctx->brightness_label, LV_PCT(100));
+    lv_obj_set_style_text_align(ctx->brightness_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(ctx->brightness_label, lv_color_hex(0xe0e0e0), 0);
+
+    ctx->brightness_slider = lv_slider_create(brightness_card);
+    lv_obj_set_width(ctx->brightness_slider, LV_PCT(100));
+    lv_slider_set_range(ctx->brightness_slider, 0, 100);
+    lv_slider_set_value(ctx->brightness_slider, s_settings.brightness, LV_ANIM_OFF);
+    lv_obj_add_event_cb(ctx->brightness_slider, settings_on_brightness_changed, LV_EVENT_VALUE_CHANGED, ctx);
+    lv_obj_set_style_bg_color(ctx->brightness_slider, lv_palette_main(LV_PALETTE_GREEN), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(ctx->brightness_slider, lv_palette_main(LV_PALETTE_RED), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(ctx->brightness_slider, lv_palette_main(LV_PALETTE_ORANGE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ctx->brightness_slider, LV_OPA_COVER, LV_PART_KNOB | LV_PART_INDICATOR | LV_PART_MAIN);
+
+    int init_val = lv_slider_get_value(ctx->brightness_slider);
+    char init_txt[32];
+    lv_snprintf(init_txt, sizeof(init_txt), "Brightness: %d%%", init_val);
+    lv_label_set_text(ctx->brightness_label, init_txt);
 }
 
 static void settings_on_about(lv_event_t *e)
@@ -391,6 +442,18 @@ static void settings_on_back(lv_event_t *e)
 
 static void settings_close(settings_ctx_t *ctx)
 {
+    if (ctx && ctx->brightness_slider) {
+        int val = lv_slider_get_value(ctx->brightness_slider);
+        if (val < 0) val = 0;
+        if (val > 100) val = 100;
+        s_settings.brightness = val;
+        if (s_settings.brightness != s_settings.saved_brightness) {
+            persist_brightness_to_nvs();
+        }
+    }
+
+    persist_rotation_to_nvs();
+
     ctx->active = false;
     if (ctx->return_screen)
     {
@@ -527,11 +590,60 @@ static void persist_rotation_to_nvs(void)
     }
 }
 
+static void load_brightness_from_nvs(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(SETTINGS_NVS_NS, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        s_settings.brightness = 100;
+        s_settings.saved_brightness = s_settings.brightness;
+        return;
+    }
+
+    int32_t stored = 100;
+    err = nvs_get_i32(h, SETTINGS_NVS_BRIGHTNESS_KEY, &stored);
+    nvs_close(h);
+
+    if (err == ESP_OK && stored >= 0 && stored <= 100) {
+        s_settings.brightness = (int)stored;
+        s_settings.saved_brightness = s_settings.brightness;
+    } else {
+        s_settings.brightness = 100;
+        s_settings.saved_brightness = s_settings.brightness;
+    }
+}
+
+static void persist_brightness_to_nvs(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(SETTINGS_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to open NVS for brightness: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = nvs_set_i32(h, SETTINGS_NVS_BRIGHTNESS_KEY, s_settings.brightness);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to save brightness to NVS: %s", esp_err_to_name(err));
+    } else {
+        s_settings.saved_brightness = s_settings.brightness;
+    }
+}
+
 static void init_settings(void)
 {
     /* Default state corresponds to 0-degree rotation (state 3 in our sequence). */
     s_settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
+    s_settings.brightness = 100;
+    s_settings.saved_brightness = 100;
+    load_brightness_from_nvs();
     load_rotation_from_nvs();
+    bsp_display_brightness_set(s_settings.brightness);
     apply_rotation_to_display(true);
 }
 
@@ -545,7 +657,24 @@ static void settings_rotate_screen(lv_event_t *e)
 
     s_settings.screen_rotation_step = (s_settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
     apply_rotation_to_display(false);
-    persist_rotation_to_nvs();
+}
+
+static void settings_on_brightness_changed(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->brightness_label || !ctx->brightness_slider) {
+        return;
+    }
+
+    int val = lv_slider_get_value(ctx->brightness_slider);
+    if (val < 0) val = 0;
+    if (val > 100) val = 100;
+    s_settings.brightness = val;
+    char txt[32];
+    lv_snprintf(txt, sizeof(txt), "Brightness: %d%%", val);
+    lv_label_set_text(ctx->brightness_label, txt);
+
+    bsp_display_brightness_set(val);
 }
 
 static void settings_restart(lv_event_t *e)
@@ -578,6 +707,8 @@ static void settings_restart(lv_event_t *e)
 
 static void settings_restart_confirm(lv_event_t *e)
 {
+    persist_brightness_to_nvs();
+    persist_rotation_to_nvs();
     esp_restart();
 }
 
