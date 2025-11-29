@@ -36,6 +36,8 @@ static const char *TAG = "settings";
 
 static void settings_build_screen(settings_ctx_t *ctx);
 
+static void settings_on_about(lv_event_t *e);
+
 /**
  * @brief Back button handler for the settings screen.
  *
@@ -85,16 +87,22 @@ static esp_err_t bsp_display_start_result(void);
 
 /**
  * @brief Apply the Domine 14 font as the app-wide default LVGL theme font.
+ *
+ * @param lock_display True when calling from non-LVGL context (takes display lock);
+ *                     false when already in LVGL task (no extra lock).
  */
-static void apply_default_font_theme(void);
+static void apply_default_font_theme(bool lock_display);
 
 /**
  * @brief Apply the current rotation step to the active LVGL display.
  *
  * Maps @ref s_settings.screen_rotation_step to an LVGL display rotation and sets it,
  * clamping to a valid state if needed. Logs a warning when no display exists.
+ *
+ * @param lock_display True when calling from non-LVGL context (takes display lock);
+ *                     false when already in LVGL task (no extra lock).
  */
-static void apply_rotation_to_display(void);
+static void apply_rotation_to_display(bool lock_display);
 
 /**
  * @brief Load persisted rotation step from NVS into @ref s_settings.
@@ -134,7 +142,8 @@ void starting_routine(void)
     ESP_LOGI(TAG, "Starting bsp for ILI9341 display");
     ESP_ERROR_CHECK(bsp_display_start_result()); 
     ESP_ERROR_CHECK(bsp_display_backlight_on()); 
-    apply_default_font_theme();
+    apply_default_font_theme(true);
+
     init_settings();
 
     /* ----- Init XPT2046 Touch Driver ----- */
@@ -202,6 +211,14 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
     lv_obj_center(back_lbl);
 
+    lv_obj_t *about_btn = lv_button_create(toolbar);
+    lv_obj_set_style_radius(about_btn, 6, 0);
+    lv_obj_set_style_pad_all(about_btn, 6, 0);    
+    lv_obj_add_event_cb(about_btn, settings_on_about, LV_EVENT_CLICKED, ctx);
+    lv_obj_t *about_lbl = lv_label_create(about_btn);
+    lv_label_set_text(about_lbl, "About");
+    lv_obj_center(about_lbl);    
+
     lv_obj_t *rotate_button = lv_button_create(toolbar);
     lv_obj_set_style_radius(rotate_button, 6, 0);
     lv_obj_set_style_pad_all(rotate_button, 6, 0);    
@@ -209,6 +226,15 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_t *rotate_lbl = lv_label_create(rotate_button);
     lv_label_set_text(rotate_lbl, "Rotate Screen");
     lv_obj_center(rotate_lbl);    
+}
+
+static void settings_on_about(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx)
+    {
+        return;
+    }
 }
 
 static void settings_on_back(lv_event_t *e)
@@ -250,12 +276,16 @@ static esp_err_t bsp_display_start_result(void)
     return ESP_OK;
 }
 
-static void apply_default_font_theme(void)
+static void apply_default_font_theme(bool lock_display)
 {
     lv_display_t *disp = lv_display_get_default();
     if (!disp) {
         ESP_LOGW(TAG, "No LVGL display available; cannot set theme font");
         return;
+    }
+    
+    if (lock_display){
+        bsp_display_lock(0);
     }
 
     lv_theme_t *theme = lv_theme_default_init(
@@ -267,6 +297,9 @@ static void apply_default_font_theme(void)
 
     if (!theme) {
         ESP_LOGW(TAG, "Failed to init LVGL default theme with Domine_14");
+        if (lock_display){
+            bsp_display_unlock();
+        }
         return;
     }
 
@@ -279,14 +312,22 @@ static void apply_default_font_theme(void)
     lv_obj_set_style_text_font(act_scr, &Domine_14, 0);
     lv_obj_set_style_text_font(top_layer, &Domine_14, 0);
     lv_obj_set_style_text_font(sys_layer, &Domine_14, 0);
+
+    if (lock_display){
+        bsp_display_unlock();
+    }
 }
 
-static void apply_rotation_to_display(void)
+static void apply_rotation_to_display(bool lock_display)
 {
     lv_display_t *display = lv_display_get_default();
     if (!display) {
         ESP_LOGW(TAG, "No display available; skip applying rotation");
         return;
+    }
+
+    if (lock_display) {
+        bsp_display_lock(0);
     }
 
     /* Map state index to rotation (0:270, 1:180, 2:90, 3:0). */
@@ -299,6 +340,10 @@ static void apply_rotation_to_display(void)
             s_settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
             lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);
             break;
+    }
+
+    if (lock_display) {
+        bsp_display_unlock();
     }
 }
 
@@ -345,7 +390,7 @@ static void init_settings(void)
     /* Default state corresponds to 0-degree rotation (state 3 in our sequence). */
     s_settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
     load_rotation_from_nvs();
-    apply_rotation_to_display();
+    apply_rotation_to_display(true);
 }
 
 static void settings_rotate_screen(lv_event_t *e)
@@ -357,6 +402,6 @@ static void settings_rotate_screen(lv_event_t *e)
     }
 
     s_settings.screen_rotation_step = (s_settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
-    apply_rotation_to_display();
+    apply_rotation_to_display(false);
     persist_rotation_to_nvs();
 }
