@@ -67,6 +67,7 @@ typedef struct {
     lv_obj_t *sort_panel;
     lv_obj_t *sort_criteria_dd;
     lv_obj_t *sort_direction_dd;
+    lv_obj_t *second_header;
     lv_obj_t *parent_btn;
     lv_obj_t *list;
     lv_obj_t *folder_dialog;
@@ -194,6 +195,25 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  * @param[in,out] ctx Browser context.
  */
 static void file_browser_sync_view(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Validate presence of second-header widgets (parent/paste/cancel).
+ *
+ * @param[in,out] ctx Browser context.
+ * 
+ * @return true if all required controls exist; false otherwise.
+ */
+static bool check_second_header(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Refresh visibility/state of the second header (parent + paste/cancel).
+ *
+ * Updates parent/paste/cancel controls and hides the row when neither parent
+ * navigation nor paste actions are available.
+ * 
+ * @param[in,out] ctx Browser context.
+ */
+static void file_browser_update_second_header(file_browser_ctx_t *ctx);
 
 /**
  * @brief Show/hide the parent navigation button depending on hierarchy depth.
@@ -1087,16 +1107,16 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(ctx->path_label, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_text(ctx->path_label, "/");
 
-    lv_obj_t *second_header = lv_obj_create(scr);
-    lv_obj_remove_style_all(second_header);
-    lv_obj_set_size(second_header, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(second_header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(second_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(second_header, 3, 0);
+    ctx->second_header = lv_obj_create(scr);
+    lv_obj_remove_style_all(ctx->second_header);
+    lv_obj_set_size(ctx->second_header, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(ctx->second_header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ctx->second_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(ctx->second_header, 3, 0);
     /* MIGHT BE CHANGED */
     /* Header row: parent on the left, paste controls pinned to the right. */
 
-    ctx->parent_btn = lv_button_create(second_header);
+    ctx->parent_btn = lv_button_create(ctx->second_header);
     lv_obj_set_size(ctx->parent_btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(ctx->parent_btn, 6, 0);
     lv_obj_set_style_pad_all(ctx->parent_btn, 5, 0);
@@ -1107,12 +1127,12 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_add_flag(ctx->parent_btn, LV_OBJ_FLAG_HIDDEN);
 
     /* Spacer grows to push paste/cancel to the right edge. */
-    lv_obj_t *header_spacer = lv_obj_create(second_header);
+    lv_obj_t *header_spacer = lv_obj_create(ctx->second_header);
     lv_obj_remove_style_all(header_spacer);
     lv_obj_set_flex_grow(header_spacer, 1);
     lv_obj_set_height(header_spacer, 1);
 
-    ctx->paste_btn = lv_button_create(second_header);
+    ctx->paste_btn = lv_button_create(ctx->second_header);
     lv_obj_set_style_radius(ctx->paste_btn, 6, 0);
     lv_obj_set_style_pad_all(ctx->paste_btn, 5, 0);
     lv_obj_add_event_cb(ctx->paste_btn, file_browser_on_paste_click, LV_EVENT_CLICKED, ctx);
@@ -1120,14 +1140,14 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_label_set_text(ctx->paste_label, "Paste");
     lv_obj_set_style_text_align(ctx->paste_label, LV_TEXT_ALIGN_CENTER, 0);
 
-    ctx->cancel_paste_btn = lv_button_create(second_header);
+    ctx->cancel_paste_btn = lv_button_create(ctx->second_header);
     lv_obj_set_style_radius(ctx->cancel_paste_btn, 6, 0);
     lv_obj_set_style_pad_all(ctx->cancel_paste_btn, 5, 0);
     lv_obj_add_event_cb(ctx->cancel_paste_btn, file_browser_on_cancel_paste_click, LV_EVENT_CLICKED, ctx);
     ctx->cancel_paste_label = lv_label_create(ctx->cancel_paste_btn);
     lv_label_set_text(ctx->cancel_paste_label, "Cancel");
     lv_obj_set_style_text_align(ctx->cancel_paste_label, LV_TEXT_ALIGN_CENTER, 0);
-    file_browser_update_paste_button(ctx);
+    file_browser_update_second_header(ctx);
 
     ctx->list = lv_list_create(scr);
     lv_obj_set_flex_grow(ctx->list, 1);
@@ -1277,10 +1297,44 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     }
     file_browser_reset_window(ctx);
     file_browser_update_path_label(ctx);
-    file_browser_update_parent_button(ctx);
     file_browser_update_sort_badges(ctx);
     file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
+    file_browser_update_second_header(ctx);
+}
+
+static bool check_second_header(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->second_header){
+        return false;
+    }    
+
+    if(!ctx->parent_btn || !ctx->paste_btn || !ctx->cancel_paste_btn) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief Refresh visibility/state of the second header (parent + paste/cancel).
+ *
+ * Updates parent/paste/cancel controls and hides the row when neither parent
+ * navigation nor paste actions are available.
+ */
+static void file_browser_update_second_header(file_browser_ctx_t *ctx)
+{
+    if (!check_second_header(ctx)){
+        return;
+    }
+
+    file_browser_update_parent_button(ctx);
     file_browser_update_paste_button(ctx);
+
+    if (!fs_nav_can_go_parent(&ctx->nav) && !ctx->clipboard.has_item){
+        lv_obj_add_flag(ctx->second_header, LV_OBJ_FLAG_HIDDEN);
+    }else{
+        lv_obj_clear_flag(ctx->second_header, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void file_browser_update_parent_button(file_browser_ctx_t *ctx)
@@ -2680,7 +2734,7 @@ static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char 
         }
         if (err == ESP_OK) {
             file_browser_clear_clipboard(ctx);
-            file_browser_update_paste_button(ctx);
+            file_browser_update_second_header(ctx);
         }
         return err;
     }
@@ -2688,7 +2742,7 @@ static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char 
     err = file_browser_copy_entry(ctx->clipboard.src_path, dest_path);
     if (err == ESP_OK) {
         file_browser_clear_clipboard(ctx);
-        file_browser_update_paste_button(ctx);
+        file_browser_update_second_header(ctx);
     }else{
         ESP_LOGE(TAG, "Failed to copy entry: (%s)", esp_err_to_name(err));
     }
@@ -2841,7 +2895,7 @@ static void file_browser_on_cancel_paste_click(lv_event_t *e)
     }
 
     file_browser_clear_clipboard(ctx);
-    file_browser_update_paste_button(ctx);
+    file_browser_update_second_header(ctx);
 }
 
 static void file_browser_close_copy_confirm(file_browser_ctx_t *ctx)
@@ -3107,7 +3161,7 @@ static void file_browser_on_action_button(lv_event_t *e)
             ctx->clipboard.is_dir = ctx->action_entry.is_dir;
             strlcpy(ctx->clipboard.name, ctx->action_entry.name, sizeof(ctx->clipboard.name));
             strlcpy(ctx->clipboard.src_path, src_path, sizeof(ctx->clipboard.src_path));
-            file_browser_update_paste_button(ctx);
+            file_browser_update_second_header(ctx);
             file_browser_clear_action_state(ctx);
             break;
         }
