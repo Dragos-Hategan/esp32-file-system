@@ -25,6 +25,7 @@ typedef struct{
     lv_obj_t *return_screen;            /**< Screen to return to on close */
     lv_obj_t *screen;                   /**< Root LVGL screen object */
     lv_obj_t *toolbar;                  /**< Toolbar container */
+    lv_obj_t * restart_confirm_mbox;    /**<  */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
@@ -32,8 +33,31 @@ static settings_t s_settings;
 static settings_ctx_t s_settings_ctx;
 static const char *TAG = "settings";
 
+/**
+ * @brief Build the settings screen (header + scrollable settings list).
+ *
+ * Creates the root screen, toolbar (Back/About), and the scrollable list of settings.
+ *
+ * @param ctx Active settings context.
+ */
 static void settings_build_screen(settings_ctx_t *ctx);
+
+/**
+ * @brief Show the About overlay with setting descriptions.
+ *
+ * Opens a modal overlay on the top layer with descriptive labels and an OK button.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
 static void settings_on_about(lv_event_t *e);
+
+/**
+ * @brief Close handler for the About overlay.
+ *
+ * Deletes the overlay provided via event user data.
+ *
+ * @param e LVGL event (CLICKED) with user data = overlay obj.
+ */
 static void settings_on_about_close(lv_event_t *e);
 
 /**
@@ -53,6 +77,27 @@ static void settings_on_back(lv_event_t *e);
  * @param ctx Active settings context.
  */
 static void settings_close(settings_ctx_t *ctx);
+
+/**
+ * @brief Show a restart confirmation overlay.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
+static void settings_restart(lv_event_t *e);
+
+/**
+ * @brief Handler for confirming restart from the overlay.
+ *
+ * @param e LVGL event (CLICKED) with user data = overlay obj.
+ */
+static void settings_restart_confirm(lv_event_t *e);
+
+/**
+ * @brief Close the restart overlay without restarting.
+ *
+ * @param e LVGL event (CLICKED) with user data = overlay obj.
+ */
+static void settings_close_restart(lv_event_t *e);
 
 /**
  * @brief Initialize the Non-Volatile Storage (NVS) flash partition.
@@ -217,13 +262,43 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_label_set_text(about_lbl, "About");
     lv_obj_center(about_lbl);    
 
-    lv_obj_t *rotate_button = lv_button_create(toolbar);
-    lv_obj_set_style_radius(rotate_button, 6, 0);
-    lv_obj_set_style_pad_all(rotate_button, 6, 0);    
+    /* Scrollable settings list */
+    lv_obj_t *settings_list = lv_obj_create(scr);
+    lv_obj_remove_style_all(settings_list);
+    lv_obj_set_size(settings_list, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(settings_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(settings_list,
+                          LV_FLEX_ALIGN_CENTER,  /* main axis alignment */
+                          LV_FLEX_ALIGN_CENTER,  /* cross axis alignment */
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_grow(settings_list, 1);
+    lv_obj_set_scroll_dir(settings_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(settings_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_pad_top(settings_list, 12, 0);
+    lv_obj_set_style_pad_bottom(settings_list, 12, 0);
+    lv_obj_set_style_pad_left(settings_list, 12, 0);
+    lv_obj_set_style_pad_right(settings_list, 12, 0);
+    lv_obj_set_style_pad_row(settings_list, 10, 0);
+
+    lv_obj_t *rotate_button = lv_button_create(settings_list);
+    lv_obj_set_width(rotate_button, LV_PCT(100));
+    lv_obj_set_style_radius(rotate_button, 8, 0);
+    lv_obj_set_style_pad_all(rotate_button, 10, 0);    
     lv_obj_add_event_cb(rotate_button, settings_rotate_screen, LV_EVENT_CLICKED, ctx);
+    lv_obj_set_style_align(rotate_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *rotate_lbl = lv_label_create(rotate_button);
     lv_label_set_text(rotate_lbl, "Rotate Screen");
     lv_obj_center(rotate_lbl);    
+
+    lv_obj_t *restart_button = lv_button_create(settings_list);
+    lv_obj_set_width(restart_button, LV_PCT(100));
+    lv_obj_set_style_radius(restart_button, 8, 0);
+    lv_obj_set_style_pad_all(restart_button, 10, 0);    
+    lv_obj_add_event_cb(restart_button, settings_restart, LV_EVENT_CLICKED, ctx);
+    lv_obj_set_style_align(restart_button, LV_ALIGN_CENTER, 0);
+    lv_obj_t *restart_lbl = lv_label_create(restart_button);
+    lv_label_set_text(restart_lbl, "Restart");
+    lv_obj_center(restart_lbl);       
 }
 
 static void settings_on_about(lv_event_t *e)
@@ -471,4 +546,50 @@ static void settings_rotate_screen(lv_event_t *e)
     s_settings.screen_rotation_step = (s_settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
     apply_rotation_to_display(false);
     persist_rotation_to_nvs();
+}
+
+static void settings_restart(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx)
+    {
+        return;
+    }
+
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    ctx->restart_confirm_mbox = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text_fmt(label, "Are you sure you want to restart?");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *yes_btn = lv_msgbox_add_footer_button(mbox, "Yes");
+    lv_obj_set_user_data(yes_btn, (void *)1);
+    lv_obj_add_event_cb(yes_btn, settings_restart_confirm, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *cancel_btn = lv_msgbox_add_footer_button(mbox, "Cancel");
+    lv_obj_set_user_data(cancel_btn, (void *)0);
+    lv_obj_add_event_cb(cancel_btn, settings_close_restart, LV_EVENT_CLICKED, ctx);
+}
+
+static void settings_restart_confirm(lv_event_t *e)
+{
+    esp_restart();
+}
+
+static void settings_close_restart(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->restart_confirm_mbox)
+    {
+        return;
+    }    
+    if (ctx && ctx->restart_confirm_mbox) {
+        lv_msgbox_close(ctx->restart_confirm_mbox);
+        ctx->restart_confirm_mbox = NULL;
+    }    
 }
