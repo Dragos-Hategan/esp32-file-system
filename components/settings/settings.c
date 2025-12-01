@@ -409,6 +409,12 @@ static bool settings_is_descendant(lv_obj_t *obj, lv_obj_t *maybe_ancestor);
  * @return true if the date is valid, false otherwise.
  */
 static bool settings_is_valid_date(int year_full, int month, int day);
+static void settings_notify_time_set(void);
+static void settings_notify_time_reset(void);
+
+/* Callbacks registered by other modules to react to time set/reset events. */
+static void (*s_time_set_cb)(void) = NULL;
+static void (*s_time_reset_cb)(void) = NULL;
 
 void starting_routine(void)
 {
@@ -471,6 +477,13 @@ esp_err_t settings_show_date_time_dialog(lv_obj_t *return_screen)
     settings_ctx_t *ctx = &s_settings_ctx;
     ctx->return_screen = return_screen;
     return settings_build_date_time_dialog(ctx);
+}
+
+void settings_register_time_callbacks(void (*on_time_set)(void),
+                                      void (*on_time_reset)(void))
+{
+    s_time_set_cb = on_time_set;
+    s_time_reset_cb = on_time_reset;
 }
 
 static void settings_build_screen(settings_ctx_t *ctx)
@@ -1178,6 +1191,7 @@ static void settings_apply_date_time(lv_event_t *e)
     ctx->settings.dt_year = year;
     ctx->settings.dt_hour = hour;
     ctx->settings.dt_minute = minute;
+    settings_notify_time_set();
 
     /* Set system time from the provided fields (no persistence). */
     struct tm tm_set = {
@@ -1376,6 +1390,20 @@ static bool settings_is_valid_date(int year_full, int month, int day)
     return day <= days_in_month[month - 1];
 }
 
+static void settings_notify_time_set(void)
+{
+    if (s_time_set_cb) {
+        s_time_set_cb();
+    }
+}
+
+static void settings_notify_time_reset(void)
+{
+    if (s_time_reset_cb) {
+        s_time_reset_cb();
+    }
+}
+
 static void settings_on_brightness_changed(lv_event_t *e)
 {
     settings_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1500,6 +1528,7 @@ static void settings_reset_confirm(lv_event_t *e)
     persist_brightness_to_nvs();
     persist_rotation_to_nvs();
     init_settings();
+    settings_notify_time_reset();
 
     lv_msgbox_close(ctx->reset_confirm_mbox);
     ctx->reset_confirm_mbox = NULL;

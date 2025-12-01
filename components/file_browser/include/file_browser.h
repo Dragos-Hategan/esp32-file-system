@@ -29,6 +29,16 @@ typedef struct {
  */
 esp_err_t file_browser_start(void);
 
+/**
+ * @brief Reset the header clock display to default (show button, hide label).
+ */
+void file_browser_reset_clock_display(void);
+
+/**
+ * @brief Notify the file browser that the user set date/time (show label, hide button).
+ */
+void file_browser_on_time_set(void);
+
 #ifdef __cplusplus
 }
 #endif

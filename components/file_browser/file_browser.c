@@ -70,6 +70,7 @@ typedef struct {
     lv_obj_t *datetime_label;
     esp_timer_handle_t clock_timer;
     bool clock_timer_running;
+    bool clock_user_set;
     lv_obj_t *sort_panel;
     lv_obj_t *sort_criteria_dd;
     lv_obj_t *sort_direction_dd;
@@ -1075,6 +1076,7 @@ esp_err_t file_browser_start(void)
     memset(ctx, 0, sizeof(*ctx));
     file_browser_clear_action_state(ctx);
     file_browser_reset_window(ctx);
+    settings_register_time_callbacks(file_browser_on_time_set, file_browser_reset_clock_display);
 
     fs_nav_config_t nav_cfg = {
         .root_path = browser_cfg.root_path,
@@ -1812,6 +1814,16 @@ static void file_browser_clock_update_async(void *arg)
         return;
     }
 
+    if (!ctx->clock_user_set) {
+        if (ctx->datetime_btn) {
+            lv_obj_clear_flag(ctx->datetime_btn, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (ctx->datetime_label) {
+            lv_obj_add_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
     time_t now = time(NULL);
     struct tm tm_info;
     localtime_r(&now, &tm_info);
@@ -1826,13 +1838,35 @@ static void file_browser_clock_update_async(void *arg)
 
     lv_label_set_text(ctx->datetime_label, buf);
 
-    /* If a valid time has been set, show the label and hide the button */
-    if (now > 24 * 3600) {
-        if (ctx->datetime_btn) {
-            lv_obj_add_flag(ctx->datetime_btn, LV_OBJ_FLAG_HIDDEN);
-        }
-        lv_obj_clear_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
+    /* Show the label and hide the button */
+    if (ctx->datetime_btn) {
+        lv_obj_add_flag(ctx->datetime_btn, LV_OBJ_FLAG_HIDDEN);
     }
+    lv_obj_clear_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+void file_browser_reset_clock_display(void)
+{
+    file_browser_ctx_t *ctx = &s_browser;
+    ctx->clock_user_set = false;
+
+    if (ctx->datetime_label) {
+        lv_label_set_text(ctx->datetime_label, "00:00 - 01/01/70");
+        lv_obj_add_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ctx->datetime_btn) {
+        lv_obj_clear_flag(ctx->datetime_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/**
+ * @brief Mark the clock as user-set and refresh the header label/button state.
+ */
+void file_browser_on_time_set(void)
+{
+    file_browser_ctx_t *ctx = &s_browser;
+    ctx->clock_user_set = true;
+    file_browser_clock_update_async(NULL);
 }
 
 static void file_browser_on_entry_click(lv_event_t *e)
