@@ -1370,7 +1370,6 @@ static void file_browser_wait_for_reconnection_task(void* arg)
             esp_err_t err = file_browser_start();
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "file_browser_start() failed after SD reconnection (%s), restarting...", esp_err_to_name(err));
-                goto restart;
             }
         }
     }
@@ -1379,8 +1378,6 @@ restart:
         settings_shutdown_save_time();
     }
     esp_restart();
-    file_browser_wait_task = NULL;
-    vTaskDelete(NULL);
 }
 
 static void file_browser_sync_view(file_browser_ctx_t *ctx)
