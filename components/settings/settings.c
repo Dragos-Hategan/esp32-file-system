@@ -493,7 +493,7 @@ static void settings_on_about(lv_event_t *e)
 
     const char *lines[] = {
         "Brightness: adjusts backlight between " STR(SETTINGS_MINIMUM_BRIGHTNESS) "\% and 100\%.",
-        "Run Touch Screen Calibration: starts the touch calibration wizard and stores the new calibration.",
+        "Run Touch Screen Calibration: starts the touch calibration wizard and saves the new calibration data.",
         "Rotate Screen: rotates the display 90 degrees each time.",
         "Restart: reboots the device after saving system changes. Note: settings are also saved by simply leaving settings.",
         "Reset: restores brightness and rotation to defaults, saves them, and reapplies settings immediately.",
