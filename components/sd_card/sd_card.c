@@ -9,6 +9,7 @@
 #include "esp_vfs_fat.h"
 #include "lvgl.h"
 #include "sdmmc_cmd.h"
+#include "settings.h"
 
 #define SDSPI_RETRY_UI_STEP_MS  50U
 #define SDSPI_RETRY_DELAY_MS    500U
@@ -209,6 +210,9 @@ void retry_init_sdspi(void)
              SDSPI_MAX_RETRIES,
              esp_err_to_name(err));
 
+    if (settings_is_time_valid()){
+        settings_shutdown_save_time();
+    }
     esp_restart();
 }
 

@@ -6,6 +6,7 @@
 
 #include "file_browser.h"
 #include "settings.h"
+#include "sd_card.h"
 
 static char *TAG = "app_main";
 
@@ -16,6 +17,12 @@ static void main_task(void *arg)
     ESP_LOGI(TAG, "\n\n ********** LVGL File Display ********** \n");
 
     starting_routine();
+
+    esp_err_t err = init_sdspi();
+    if (err != ESP_OK){
+        retry_init_sdspi();
+    }    
+
     esp_err_t fb_err = file_browser_start();
     if (fb_err != ESP_OK) {
         ESP_LOGE(TAG, "file_browser_start failed: %s (waiting for SD retry)", esp_err_to_name(fb_err));

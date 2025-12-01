@@ -13,14 +13,15 @@
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "esp_system.h"
 
 #include "calibration_xpt2046.h"
 #include "touch_xpt2046.h"
-#include "sd_card.h"
 
 #define SETTINGS_NVS_NS                 "settings"
 #define SETTINGS_NVS_ROT_KEY            "rotation_step"
 #define SETTINGS_NVS_BRIGHTNESS_KEY     "brightness_pct"
+#define SETTINGS_NVS_TIME_KEY           "time_epoch"
 
 #define SETTINGS_ROTATION_STEPS          4
 #define SETTINGS_DEFAULT_ROTATION_STEP   3
@@ -43,6 +44,7 @@ typedef struct{
     int dt_year;
     int dt_hour;
     int dt_minute;
+    bool time_valid;            /**< True if a valid time was set/restored */
 }settings_t;
 
 typedef struct{
@@ -419,6 +421,21 @@ static void settings_notify_time_set(void);
  */
 static void settings_notify_time_reset(void);
 
+  /**
+   * @brief Restore system time from NVS only after a software reset; clear otherwise.
+   */
+  static void settings_restore_time_from_nvs(void);
+  /**
+   * @brief Persist the given epoch seconds to NVS.
+   *
+   * @param epoch Epoch seconds to store.
+   */
+  static void settings_persist_time_to_nvs(time_t epoch);
+  /**
+   * @brief Erase the stored time key from NVS.
+   */
+  static void settings_clear_time_in_nvs(void);
+
 /* Callbacks registered by other modules to react to time set/reset events. */
 static void (*s_time_set_cb)(void) = NULL;
 static void (*s_time_reset_cb)(void) = NULL;
@@ -452,13 +469,6 @@ void starting_routine(void)
     /* ----- Calibration Test ----- */
     ESP_LOGI(TAG, "Start calibration dialog");
     ESP_ERROR_CHECK(calibration_test(calibration_found));
-
-    /* ----- Init SDSPI ----- */
-    ESP_LOGI(TAG, "Initializing SDSPI");
-    esp_err_t err = init_sdspi();
-    if (err != ESP_OK){
-        sdspi_schedule_sd_retry();
-    }
 }
 
 esp_err_t settings_open_settings(lv_obj_t *return_screen)
@@ -491,6 +501,29 @@ void settings_register_time_callbacks(void (*on_time_set)(void),
 {
     s_time_set_cb = on_time_set;
     s_time_reset_cb = on_time_reset;
+
+    if (s_settings_ctx.settings.time_valid) {
+        if (s_time_set_cb) {
+            s_time_set_cb();
+        }
+    } else {
+        if (s_time_reset_cb) {
+            s_time_reset_cb();
+        }
+    }
+}
+
+void settings_shutdown_save_time(void)
+{
+    time_t now = time(NULL);
+    if (now > 0) {
+        settings_persist_time_to_nvs(now);
+    }
+}
+
+bool settings_is_time_valid()
+{
+    return s_settings_ctx.settings.time_valid == true;
 }
 
 static void settings_build_screen(settings_ctx_t *ctx)
@@ -942,10 +975,12 @@ static void init_settings(void)
     s_settings_ctx.settings.saved_rotation_step = s_settings_ctx.settings.screen_rotation_step;
     s_settings_ctx.settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
     s_settings_ctx.settings.saved_brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+    s_settings_ctx.settings.time_valid = false;
     load_brightness_from_nvs();
     load_rotation_from_nvs();
     bsp_display_brightness_set(s_settings_ctx.settings.brightness);
     apply_rotation_to_display(true);
+    settings_restore_time_from_nvs();
 }
 
 static void settings_rotate_screen(lv_event_t *e)
@@ -1198,6 +1233,7 @@ static void settings_apply_date_time(lv_event_t *e)
     ctx->settings.dt_year = year;
     ctx->settings.dt_hour = hour;
     ctx->settings.dt_minute = minute;
+    ctx->settings.time_valid = true;
     settings_notify_time_set();
 
     /* Set system time from the provided fields (no persistence). */
@@ -1217,6 +1253,8 @@ static void settings_apply_date_time(lv_event_t *e)
         };
         settimeofday(&tv, NULL);
     }
+
+    settings_persist_time_to_nvs(t);
 
     if (ctx->datetime_overlay) {
         lv_obj_del(ctx->datetime_overlay);
@@ -1411,6 +1449,58 @@ static void settings_notify_time_reset(void)
     }
 }
 
+static void settings_persist_time_to_nvs(time_t epoch)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_set_i64(h, SETTINGS_NVS_TIME_KEY, (int64_t)epoch);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void settings_clear_time_in_nvs(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_erase_key(h, SETTINGS_NVS_TIME_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void settings_restore_time_from_nvs(void)
+{
+    esp_reset_reason_t reason = esp_reset_reason();
+    if (reason != ESP_RST_SW) {
+        settings_clear_time_in_nvs();
+        s_settings_ctx.settings.time_valid = false;
+        settings_notify_time_reset();
+        return;
+    }
+
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    int64_t stored = 0;
+    esp_err_t err = nvs_get_i64(h, SETTINGS_NVS_TIME_KEY, &stored);
+    nvs_close(h);
+    if (err != ESP_OK || stored <= 0) {
+        return;
+    }
+
+    struct timeval tv = {
+        .tv_sec = (time_t)stored,
+        .tv_usec = 0,
+    };
+    settimeofday(&tv, NULL);
+    s_settings_ctx.settings.time_valid = true;
+    settings_notify_time_set();
+}
+
 static void settings_on_brightness_changed(lv_event_t *e)
 {
     settings_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1471,6 +1561,9 @@ static void settings_restart_confirm(lv_event_t *e)
     }
     if (ctx->settings.screen_rotation_step != ctx->settings.saved_rotation_step) {
         persist_rotation_to_nvs();
+    }
+    if (settings_is_time_valid()){
+        settings_shutdown_save_time();
     }
     esp_restart();
 }
@@ -1535,6 +1628,8 @@ static void settings_reset_confirm(lv_event_t *e)
     persist_brightness_to_nvs();
     persist_rotation_to_nvs();
     init_settings();
+    settings_clear_time_in_nvs();
+    s_settings_ctx.settings.time_valid = false;
     settings_notify_time_reset();
 
     lv_msgbox_close(ctx->reset_confirm_mbox);

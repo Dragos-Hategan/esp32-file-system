@@ -47,6 +47,18 @@ esp_err_t settings_show_date_time_dialog(lv_obj_t *return_screen);
 void settings_register_time_callbacks(void (*on_time_set)(void),
                                       void (*on_time_reset)(void));
 
+/**
+ * @brief persists current system time to NVS.
+ */                                     
+void settings_shutdown_save_time(void);     
+
+/**
+ * @brief Check if there is any valid value in NVS for system time.
+ *
+ * @return true if time is valid, false otherwise.
+ */
+bool settings_is_time_valid();
+
 #ifdef __cplusplus
 }
 #endif

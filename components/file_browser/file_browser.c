@@ -1358,23 +1358,27 @@ static void file_browser_wait_for_reconnection_task(void* arg)
                 esp_err_t nav_err = fs_nav_go_parent(&ctx->nav);
                 if (nav_err != ESP_OK){
                     ESP_LOGE(TAG, "fs_nav_go_parent() failed after reconnection (%s), restarting...", esp_err_to_name(nav_err));
-                    esp_restart();
+                    goto restart;
                 }
             }
             esp_err_t err = file_browser_reload();
             if (err != ESP_OK){
                 ESP_LOGE(TAG, "file_browser_reload() failed while trying to refresh the screen after a sd card reconnection, restaring...\n");
-                esp_restart();
+                goto restart;
             }
         } else {
             esp_err_t err = file_browser_start();
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "file_browser_start() failed after SD reconnection (%s), restarting...", esp_err_to_name(err));
-                esp_restart();
+                goto restart;
             }
         }
     }
-
+restart:
+    if (settings_is_time_valid()){
+        settings_shutdown_save_time();
+    }
+    esp_restart();
     file_browser_wait_task = NULL;
     vTaskDelete(NULL);
 }
