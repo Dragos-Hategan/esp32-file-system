@@ -284,6 +284,7 @@ static void init_settings(void);
  */
 static void settings_rotate_screen(lv_event_t *e);
 
+static esp_err_t settings_build_date_time_dialog(settings_ctx_t *ctx);
 static void settings_set_date_time(lv_event_t *e);
 static void settings_apply_date_time(lv_event_t *e);
 static void settings_close_set_date_time(lv_event_t *e);
@@ -398,10 +399,11 @@ static void settings_build_screen(settings_ctx_t *ctx)
     /* Scrollable settings list */
     lv_obj_t *settings_list = lv_obj_create(scr);
     lv_obj_remove_style_all(settings_list);
-    lv_obj_set_size(settings_list, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_width(settings_list, LV_PCT(100));
+    lv_obj_set_height(settings_list, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(settings_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(settings_list,
-                          LV_FLEX_ALIGN_CENTER,  /* main axis alignment */
+                          LV_FLEX_ALIGN_START,   /* main axis alignment: start to avoid overlap with header */
                           LV_FLEX_ALIGN_CENTER,  /* cross axis alignment */
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_flex_grow(settings_list, 1);
