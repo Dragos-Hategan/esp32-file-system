@@ -15,9 +15,12 @@
 #define SETTINGS_NVS_NS                 "settings"
 #define SETTINGS_NVS_ROT_KEY            "rotation_step"
 #define SETTINGS_NVS_BRIGHTNESS_KEY     "brightness_pct"
-#define SETTINGS_ROTATION_STEPS          4
 
-#define SETTINGS_MINIMUM_BRIGHTNESS 10   /**< Lowest brightness percent to avoid black screen */
+#define SETTINGS_ROTATION_STEPS          4
+#define SETTINGS_DEFAULT_ROTATION_STEP   3
+#define SETTINGS_DEFAULT_BRIGHTNESS      100
+#define SETTINGS_MINIMUM_BRIGHTNESS      10   /**< Lowest brightness percent to avoid black screen */
+
 #define STR_HELPER(x)               #x
 #define STR(x)                      STR_HELPER(x)
 
@@ -36,6 +39,7 @@ typedef struct{
     lv_obj_t *brightness_label;         /**< Label showing current brightness percent */
     lv_obj_t *brightness_slider;        /**< Slider to pick brightness percent */
     lv_obj_t * restart_confirm_mbox;    /**< Active restart confirmation dialog (NULL when closed) */
+    lv_obj_t * reset_confirm_mbox;      /**< Active reset confirmation dialog (NULL when closed) */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
@@ -122,6 +126,34 @@ static void settings_restart_confirm(lv_event_t *e);
  * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
  */
 static void settings_close_restart(lv_event_t *e);
+
+/**
+ * @brief Show a reset confirmation overlay.
+ *
+ * Creates a confirmation dialog for resetting settings and stores it in the context.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
+static void settings_reset(lv_event_t *e);
+
+/**
+ * @brief Confirm reset, restore defaults, and reinitialize settings.
+ *
+ * Resets brightness and rotation to defaults, persists them, reinitializes runtime state,
+ * and closes the reset dialog.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
+static void settings_reset_confirm(lv_event_t *e);
+
+/**
+ * @brief Close the reset confirmation overlay without applying changes.
+ *
+ * Dismisses the reset dialog and clears its pointer from the context.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
+static void settings_close_reset(lv_event_t *e);
 
 /**
  * @brief Initialize the Non-Volatile Storage (NVS) flash partition.
@@ -373,6 +405,16 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_t *restart_lbl = lv_label_create(restart_button);
     lv_label_set_text(restart_lbl, "Restart");
     lv_obj_center(restart_lbl);
+
+    lv_obj_t *reset_button = lv_button_create(settings_list);
+    lv_obj_set_width(reset_button, LV_PCT(100));
+    lv_obj_set_style_radius(reset_button, 8, 0);
+    lv_obj_set_style_pad_all(reset_button, 10, 0);    
+    lv_obj_add_event_cb(reset_button, settings_reset, LV_EVENT_CLICKED, ctx);
+    lv_obj_set_style_align(reset_button, LV_ALIGN_CENTER, 0);
+    lv_obj_t *reset_lbl = lv_label_create(reset_button);
+    lv_label_set_text(reset_lbl, "Reset");
+    lv_obj_center(reset_lbl);    
 }
 
 static void settings_on_about(lv_event_t *e)
@@ -418,6 +460,7 @@ static void settings_on_about(lv_event_t *e)
         "Brightness: adjusts backlight between " STR(SETTINGS_MINIMUM_BRIGHTNESS) "\% and 100\%.",
         "Rotate Screen: rotates the display 90 degrees each time.",
         "Restart: reboots the device after saving system changes. Note: settings are also saved by simply leaving settings.",
+        "Reset: restores brightness and rotation to defaults, saves them, and reapplies settings immediately.",
     };
 
     for (size_t i = 0; i < sizeof(lines)/sizeof(lines[0]); i++) {
@@ -618,12 +661,12 @@ static void load_brightness_from_nvs(void)
     nvs_handle_t h;
     esp_err_t err = nvs_open(SETTINGS_NVS_NS, NVS_READONLY, &h);
     if (err != ESP_OK) {
-        s_settings.brightness = 100;
+        s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
         s_settings.saved_brightness = s_settings.brightness;
         return;
     }
 
-    int32_t stored = 100;
+    int32_t stored = SETTINGS_DEFAULT_BRIGHTNESS;
     err = nvs_get_i32(h, SETTINGS_NVS_BRIGHTNESS_KEY, &stored);
     nvs_close(h);
 
@@ -631,7 +674,7 @@ static void load_brightness_from_nvs(void)
         s_settings.brightness = (int)stored;
         s_settings.saved_brightness = s_settings.brightness;
     } else {
-        s_settings.brightness = 100;
+        s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
         s_settings.saved_brightness = s_settings.brightness;
     }
 }
@@ -661,10 +704,10 @@ static void persist_brightness_to_nvs(void)
 static void init_settings(void)
 {
     /* Default state corresponds to 0-degree rotation (state 3 in our sequence). */
-    s_settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
+    s_settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
     s_settings.saved_rotation_step = s_settings.screen_rotation_step;
-    s_settings.brightness = 100;
-    s_settings.saved_brightness = 100;
+    s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+    s_settings.saved_brightness = SETTINGS_DEFAULT_BRIGHTNESS;
     load_brightness_from_nvs();
     load_rotation_from_nvs();
     bsp_display_brightness_set(s_settings.brightness);
@@ -757,5 +800,70 @@ static void settings_close_restart(lv_event_t *e)
     if (ctx && ctx->restart_confirm_mbox) {
         lv_msgbox_close(ctx->restart_confirm_mbox);
         ctx->restart_confirm_mbox = NULL;
+    }    
+}
+
+static void settings_reset(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx)
+    {
+        return;
+    }
+
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    ctx->reset_confirm_mbox = mbox;
+    lv_obj_set_style_max_width(mbox, LV_PCT(80), 0);
+    lv_obj_center(mbox);
+
+    lv_obj_t *label = lv_label_create(mbox);
+    lv_label_set_text_fmt(label, "Are you sure you want to reset?");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *yes_btn = lv_msgbox_add_footer_button(mbox, "Yes");
+    lv_obj_set_user_data(yes_btn, (void *)1);
+    lv_obj_add_event_cb(yes_btn, settings_reset_confirm, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *cancel_btn = lv_msgbox_add_footer_button(mbox, "Cancel");
+    lv_obj_set_user_data(cancel_btn, (void *)0);
+    lv_obj_add_event_cb(cancel_btn, settings_close_reset, LV_EVENT_CLICKED, ctx);
+}
+
+static void settings_reset_confirm(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->reset_confirm_mbox)
+    {
+        return;
+    }  
+
+    s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+    s_settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
+    lv_slider_set_value(ctx->brightness_slider, s_settings.brightness, LV_ANIM_OFF);
+    
+    char brightness_txt[32];
+    lv_snprintf(brightness_txt, sizeof(brightness_txt), "Brightness: %d%%", s_settings.brightness);
+    lv_label_set_text(ctx->brightness_label, brightness_txt);    
+
+    persist_brightness_to_nvs();
+    persist_rotation_to_nvs();
+    init_settings();
+
+    lv_msgbox_close(ctx->reset_confirm_mbox);
+    ctx->reset_confirm_mbox = NULL;
+}
+
+static void settings_close_reset(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->reset_confirm_mbox)
+    {
+        return;
+    }    
+    if (ctx && ctx->reset_confirm_mbox) {
+        lv_msgbox_close(ctx->reset_confirm_mbox);
+        ctx->reset_confirm_mbox = NULL;
     }    
 }
