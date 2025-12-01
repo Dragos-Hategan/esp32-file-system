@@ -64,6 +64,8 @@ typedef struct {
     lv_obj_t *path_label;
     lv_obj_t *settings_btn;
     lv_obj_t *tools_dd;
+    lv_obj_t *datetime_btn;
+    lv_obj_t *datetime_label;
     lv_obj_t *sort_panel;
     lv_obj_t *sort_criteria_dd;
     lv_obj_t *sort_direction_dd;
@@ -1095,6 +1097,33 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_width(ctx->tools_dd, 70);
     lv_obj_set_style_pad_all(ctx->tools_dd, 4, 0);
     lv_obj_add_event_cb(ctx->tools_dd, file_browser_on_tools_changed, LV_EVENT_VALUE_CHANGED, ctx);
+
+    /* Spacer to consume remaining header width before centering the clock label/button area. */
+    lv_obj_t *header_spacer_left = lv_obj_create(main_header);
+    lv_obj_remove_style_all(header_spacer_left);
+    lv_obj_set_flex_grow(header_spacer_left, 1);
+    lv_obj_set_height(header_spacer_left, 1);
+
+    /* Date/Time placeholder button (visible by default). */
+    ctx->datetime_btn = lv_button_create(main_header);
+    lv_obj_set_style_radius(ctx->datetime_btn, 6, 0);
+    lv_obj_set_style_pad_all(ctx->datetime_btn, 6, 0);
+    lv_obj_t *datetime_btn_lbl = lv_label_create(ctx->datetime_btn);
+    lv_label_set_text(datetime_btn_lbl, "Set Date/Time");
+    lv_obj_center(datetime_btn_lbl);
+    lv_obj_add_flag(ctx->datetime_btn, LV_OBJ_FLAG_HIDDEN);
+
+    /* Date/Time label (hidden until a time is set). */
+    ctx->datetime_label = lv_label_create(main_header);
+    lv_label_set_text(ctx->datetime_label, "00:00 - 01/01/70");
+    lv_obj_set_style_text_align(ctx->datetime_label, LV_TEXT_ALIGN_CENTER, 0);
+    //lv_obj_add_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
+
+    /* Spacer to balance layout so the button stays centered in the remaining space. */
+    lv_obj_t *header_spacer_right = lv_obj_create(main_header);
+    lv_obj_remove_style_all(header_spacer_right);
+    lv_obj_set_flex_grow(header_spacer_right, 1);
+    lv_obj_set_height(header_spacer_right, 1);
 
     lv_obj_t *path_row = lv_obj_create(scr);
     lv_obj_remove_style_all(path_row);

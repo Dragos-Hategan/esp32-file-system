@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS  "settings.c"
+    SRCS "settings.c"
     INCLUDE_DIRS "include"
     REQUIRES
         esp_common  

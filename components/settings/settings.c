@@ -419,7 +419,7 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_set_style_align(calibration_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *calibration_lbl = lv_label_create(calibration_button);
     lv_label_set_text(calibration_lbl, "Run Touch Screen Calibration");
-    lv_obj_center(calibration_lbl);  
+    lv_obj_center(calibration_lbl);       
 
     lv_obj_t *rotate_button = lv_button_create(settings_list);
     lv_obj_set_width(rotate_button, LV_PCT(100));
@@ -430,6 +430,16 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_t *rotate_lbl = lv_label_create(rotate_button);
     lv_label_set_text(rotate_lbl, "Rotate Screen");
     lv_obj_center(rotate_lbl);   
+
+    lv_obj_t *set_date_time_button = lv_button_create(settings_list);
+    lv_obj_set_width(set_date_time_button, LV_PCT(100));
+    lv_obj_set_style_radius(set_date_time_button, 8, 0);
+    lv_obj_set_style_pad_all(set_date_time_button, 10, 0);    
+    lv_obj_add_event_cb(set_date_time_button, settings_rotate_screen, LV_EVENT_CLICKED, ctx);
+    lv_obj_set_style_align(set_date_time_button, LV_ALIGN_CENTER, 0);
+    lv_obj_t *set_date_time_lbl = lv_label_create(set_date_time_button);
+    lv_label_set_text(set_date_time_lbl, "Set Date/Time");
+    lv_obj_center(set_date_time_lbl);  
 
     lv_obj_t *restart_button = lv_button_create(settings_list);
     lv_obj_set_width(restart_button, LV_PCT(100));
