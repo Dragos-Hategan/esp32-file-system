@@ -294,6 +294,7 @@ static void settings_on_dt_textarea_focus(lv_event_t *e);
 static void settings_on_dt_background_tap(lv_event_t *e);
 static void settings_on_dt_keyboard_event(lv_event_t *e);
 static void settings_on_dt_textarea_defocus(lv_event_t *e);
+static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta);
 static void settings_hide_dt_keyboard(settings_ctx_t *ctx);
 static bool settings_is_descendant(lv_obj_t *obj, lv_obj_t *maybe_ancestor);
 
@@ -834,13 +835,14 @@ static void settings_set_date_time(lv_event_t *e)
     lv_obj_set_style_radius(dlg, 12, 0);
     lv_obj_set_style_pad_all(dlg, 12, 0);
     lv_obj_set_style_pad_gap(dlg, 6, 0);
+    lv_obj_set_style_pad_bottom(dlg, 90, 0); /* leave room when keyboard appears */
     lv_obj_set_size(dlg, lv_pct(82), lv_pct(70));
     lv_obj_set_flex_flow(dlg, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(dlg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(dlg, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(dlg, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_scroll_dir(dlg, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(dlg, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(dlg, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_add_event_cb(dlg, settings_on_dt_background_tap, LV_EVENT_CLICKED, ctx);
     lv_obj_center(dlg);
     ctx->dt_dialog = dlg;
@@ -1091,9 +1093,7 @@ static void settings_on_dt_textarea_focus(lv_event_t *e)
     }
     lv_keyboard_set_textarea(ctx->dt_keyboard, ta);
     lv_obj_clear_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN);
-    if (ctx->dt_dialog) {
-        lv_obj_scroll_to_view(ta, LV_ANIM_OFF);
-    }
+    settings_scroll_field_into_view(ctx, ta);
 }
 
 static void settings_on_dt_background_tap(lv_event_t *e)
@@ -1136,6 +1136,18 @@ static void settings_on_dt_keyboard_event(lv_event_t *e)
     settings_hide_dt_keyboard(ctx);
 }
 
+static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta)
+{
+    if (!ctx || !ctx->dt_dialog || !ta) {
+        return;
+    }
+    lv_obj_t *target = ta;
+    if ((ta == ctx->dt_hour_ta || ta == ctx->dt_min_ta) && ctx->dt_row_time) {
+        target = ctx->dt_row_time;
+    }
+    lv_obj_scroll_to_view(target, LV_ANIM_ON);
+}
+
 static void settings_on_dt_textarea_defocus(lv_event_t *e)
 {
     settings_ctx_t *ctx = lv_event_get_user_data(e);
@@ -1158,6 +1170,7 @@ static void settings_on_dt_textarea_defocus(lv_event_t *e)
     } else if (ta == ctx->dt_min_ta) {
         lv_textarea_set_text(ta, "MM");
     }
+    settings_scroll_field_into_view(ctx, ta);
 }
 
 static bool settings_is_descendant(lv_obj_t *obj, lv_obj_t *maybe_ancestor)
