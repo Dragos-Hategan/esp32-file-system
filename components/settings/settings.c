@@ -354,6 +354,13 @@ esp_err_t settings_open_settings(lv_obj_t *return_screen)
     return ESP_OK;
 }
 
+esp_err_t settings_show_date_time_dialog(lv_obj_t *return_screen)
+{
+    settings_ctx_t *ctx = &s_settings_ctx;
+    ctx->return_screen = return_screen;
+    return settings_build_date_time_dialog(ctx);
+}
+
 static void settings_build_screen(settings_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -801,11 +808,10 @@ static void settings_rotate_screen(lv_event_t *e)
     apply_rotation_to_display(false);
 }
 
-static void settings_set_date_time(lv_event_t *e)
+static esp_err_t settings_build_date_time_dialog(settings_ctx_t *ctx)
 {
-    settings_ctx_t *ctx = lv_event_get_user_data(e);
     if (!ctx) {
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
 
     /* Close previous overlay if still open. */
@@ -978,6 +984,17 @@ static void settings_set_date_time(lv_event_t *e)
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_CANCEL, ctx);
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_READY, ctx);
     lv_obj_align(ctx->dt_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    return ESP_OK;
+}
+
+static void settings_set_date_time(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    settings_build_date_time_dialog(ctx);
 }
 
 static void settings_close_set_date_time(lv_event_t *e)

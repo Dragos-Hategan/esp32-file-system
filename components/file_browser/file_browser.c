@@ -160,7 +160,8 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  * @param[in,out] ctx Browser context (must be non-NULL).
  * @internal UI construction only; does not query filesystem.
  */
- static void file_browser_build_screen(file_browser_ctx_t *ctx);
+static void file_browser_build_screen(file_browser_ctx_t *ctx);
+static void file_browser_on_datetime_click(lv_event_t *e);
 
 /**
  * @brief Reset the virtual list window to the first page.
@@ -1113,6 +1114,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_t *datetime_btn_lbl = lv_label_create(ctx->datetime_btn);
     lv_label_set_text(datetime_btn_lbl, "Set Date/Time");
     lv_obj_center(datetime_btn_lbl);
+    lv_obj_add_event_cb(ctx->datetime_btn, file_browser_on_datetime_click, LV_EVENT_CLICKED, ctx);
 
     /* Date/Time label (hidden until a time is set). */
     ctx->datetime_label = lv_label_create(main_header);
@@ -1721,6 +1723,12 @@ static void file_browser_on_unsupported_ok(lv_event_t *e)
     if (mbox) {
         lv_msgbox_close(mbox);
     }
+}
+
+static void file_browser_on_datetime_click(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    settings_show_date_time_dialog(ctx ? ctx->screen : NULL);
 }
 
 static void file_browser_on_entry_click(lv_event_t *e)

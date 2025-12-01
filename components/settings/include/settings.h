@@ -26,6 +26,18 @@ void starting_routine(void);
  */
 esp_err_t settings_open_settings(lv_obj_t *return_screen);
 
+/**
+ * @brief Show the Set Date/Time dialog.
+ *
+ * Builds the date/time picker overlay on the top layer. Caller provides the
+ * screen to return focus to (used for context). The dialog uses the shared
+ * settings context/state.
+ *
+ * @param return_screen Screen that owns the caller UI (can be NULL).
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if LVGL is not ready.
+ */
+esp_err_t settings_show_date_time_dialog(lv_obj_t *return_screen);
+
 #ifdef __cplusplus
 }
 #endif
