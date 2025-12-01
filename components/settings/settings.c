@@ -18,8 +18,8 @@
 
 #define SETTINGS_ROTATION_STEPS          4
 #define SETTINGS_DEFAULT_ROTATION_STEP   3
-#define SETTINGS_DEFAULT_BRIGHTNESS      100
 #define SETTINGS_MINIMUM_BRIGHTNESS      10   /**< Lowest brightness percent to avoid black screen */
+#define SETTINGS_DEFAULT_BRIGHTNESS      100
 
 #define STR_HELPER(x)               #x
 #define STR(x)                      STR_HELPER(x)
@@ -38,8 +38,8 @@ typedef struct{
     lv_obj_t *toolbar;                  /**< Toolbar container */
     lv_obj_t *brightness_label;         /**< Label showing current brightness percent */
     lv_obj_t *brightness_slider;        /**< Slider to pick brightness percent */
-    lv_obj_t * restart_confirm_mbox;    /**< Active restart confirmation dialog (NULL when closed) */
-    lv_obj_t * reset_confirm_mbox;      /**< Active reset confirmation dialog (NULL when closed) */
+    lv_obj_t *restart_confirm_mbox;     /**< Active restart confirmation dialog (NULL when closed) */
+    lv_obj_t *reset_confirm_mbox;       /**< Active reset confirmation dialog (NULL when closed) */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
@@ -155,6 +155,8 @@ static void settings_reset_confirm(lv_event_t *e);
  */
 static void settings_close_reset(lv_event_t *e);
 
+static void settings_run_calibration(lv_event_t *e);
+
 /**
  * @brief Initialize the Non-Volatile Storage (NVS) flash partition.
  *
@@ -187,8 +189,8 @@ static esp_err_t bsp_display_start_result(void);
 /**
  * @brief Apply the Domine 14 font as the app-wide default LVGL theme font.
  *
- * @param lock_display True when calling from non-LVGL context (takes display lock);
- *                     false when already in LVGL task (no extra lock).
+ * @param[in] lock_display True when calling from non-LVGL context (takes display lock);
+ *                         False when already in LVGL task (no extra lock).
  */
 static void apply_default_font_theme(bool lock_display);
 
@@ -198,8 +200,8 @@ static void apply_default_font_theme(bool lock_display);
  * Maps @ref s_settings.screen_rotation_step to an LVGL display rotation and sets it,
  * clamping to a valid state if needed. Logs a warning when no display exists.
  *
- * @param lock_display True when calling from non-LVGL context (takes display lock);
- *                     false when already in LVGL task (no extra lock).
+ * @param[in] lock_display True when calling from non-LVGL context (takes display lock);
+ *                         False when already in LVGL task (no extra lock).
  */
 static void apply_rotation_to_display(bool lock_display);
 
@@ -386,6 +388,16 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_snprintf(init_txt, sizeof(init_txt), "Brightness: %d%%", init_val);
     lv_label_set_text(ctx->brightness_label, init_txt);
 
+    lv_obj_t *calibration_button = lv_button_create(settings_list);
+    lv_obj_set_width(calibration_button, LV_PCT(100));
+    lv_obj_set_style_radius(calibration_button, 8, 0);
+    lv_obj_set_style_pad_all(calibration_button, 10, 0);    
+    lv_obj_add_event_cb(calibration_button, settings_run_calibration, LV_EVENT_CLICKED, ctx);
+    lv_obj_set_style_align(calibration_button, LV_ALIGN_CENTER, 0);
+    lv_obj_t *calibration_lbl = lv_label_create(calibration_button);
+    lv_label_set_text(calibration_lbl, "Run Touch Screen Calibration");
+    lv_obj_center(calibration_lbl);  
+
     lv_obj_t *rotate_button = lv_button_create(settings_list);
     lv_obj_set_width(rotate_button, LV_PCT(100));
     lv_obj_set_style_radius(rotate_button, 8, 0);
@@ -394,7 +406,7 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_set_style_align(rotate_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *rotate_lbl = lv_label_create(rotate_button);
     lv_label_set_text(rotate_lbl, "Rotate Screen");
-    lv_obj_center(rotate_lbl);  
+    lv_obj_center(rotate_lbl);   
 
     lv_obj_t *restart_button = lv_button_create(settings_list);
     lv_obj_set_width(restart_button, LV_PCT(100));
@@ -414,7 +426,7 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_set_style_align(reset_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *reset_lbl = lv_label_create(reset_button);
     lv_label_set_text(reset_lbl, "Reset");
-    lv_obj_center(reset_lbl);    
+    lv_obj_center(reset_lbl);       
 }
 
 static void settings_on_about(lv_event_t *e)
@@ -458,6 +470,7 @@ static void settings_on_about(lv_event_t *e)
 
     const char *lines[] = {
         "Brightness: adjusts backlight between " STR(SETTINGS_MINIMUM_BRIGHTNESS) "\% and 100\%.",
+        "Run Touch Screen Calibration: starts the touch calibration wizard and stores the new calibration.",
         "Rotate Screen: rotates the display 90 degrees each time.",
         "Restart: reboots the device after saving system changes. Note: settings are also saved by simply leaving settings.",
         "Reset: restores brightness and rotation to defaults, saves them, and reapplies settings immediately.",
@@ -866,4 +879,19 @@ static void settings_close_reset(lv_event_t *e)
         lv_msgbox_close(ctx->reset_confirm_mbox);
         ctx->reset_confirm_mbox = NULL;
     }    
+}
+
+static void settings_run_calibration(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->screen)
+    {
+        return;
+    }
+
+    lv_obj_clean(ctx->screen);
+    ctx->screen = NULL;
+    ctx->active = false;
+    calibration_test(true);
+    settings_open_settings(ctx->return_screen);
 }
