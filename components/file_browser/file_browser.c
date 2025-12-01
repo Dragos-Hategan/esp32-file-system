@@ -1113,13 +1113,12 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_t *datetime_btn_lbl = lv_label_create(ctx->datetime_btn);
     lv_label_set_text(datetime_btn_lbl, "Set Date/Time");
     lv_obj_center(datetime_btn_lbl);
-    lv_obj_add_flag(ctx->datetime_btn, LV_OBJ_FLAG_HIDDEN);
 
     /* Date/Time label (hidden until a time is set). */
     ctx->datetime_label = lv_label_create(main_header);
     lv_label_set_text(ctx->datetime_label, "00:00 - 01/01/70");
     lv_obj_set_style_text_align(ctx->datetime_label, LV_TEXT_ALIGN_CENTER, 0);
-    //lv_obj_add_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ctx->datetime_label, LV_OBJ_FLAG_HIDDEN);
 
     /* Spacer to balance layout so the button stays centered in the remaining space. */
     lv_obj_t *header_spacer_right = lv_obj_create(main_header);

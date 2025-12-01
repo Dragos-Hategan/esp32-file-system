@@ -46,6 +46,12 @@ typedef struct{
     lv_obj_t *brightness_slider;        /**< Slider to pick brightness percent */
     lv_obj_t *restart_confirm_mbox;     /**< Active restart confirmation dialog (NULL when closed) */
     lv_obj_t *reset_confirm_mbox;       /**< Active reset confirmation dialog (NULL when closed) */
+    lv_obj_t *datetime_overlay;         /**< Active date/time overlay (NULL when closed) */
+    lv_obj_t *dt_month_ta;              /**< Month input (MM) */
+    lv_obj_t *dt_day_ta;                /**< Day input (DD) */
+    lv_obj_t *dt_year_ta;               /**< Year input (YY) */
+    lv_obj_t *dt_hour_ta;               /**< Hour input (HH) */
+    lv_obj_t *dt_min_ta;                /**< Minute input (MM) */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
@@ -269,6 +275,9 @@ static void init_settings(void);
  */
 static void settings_rotate_screen(lv_event_t *e);
 
+static void settings_set_date_time(lv_event_t *e);
+static void settings_close_set_date_time(lv_event_t *e);
+
 void starting_routine(void)
 {
     /* ----- Init NSV ----- */
@@ -435,7 +444,7 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_set_width(set_date_time_button, LV_PCT(100));
     lv_obj_set_style_radius(set_date_time_button, 8, 0);
     lv_obj_set_style_pad_all(set_date_time_button, 10, 0);    
-    lv_obj_add_event_cb(set_date_time_button, settings_rotate_screen, LV_EVENT_CLICKED, ctx);
+    lv_obj_add_event_cb(set_date_time_button, settings_set_date_time, LV_EVENT_CLICKED, ctx);
     lv_obj_set_style_align(set_date_time_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *set_date_time_lbl = lv_label_create(set_date_time_button);
     lv_label_set_text(set_date_time_lbl, "Set Date/Time");
@@ -770,6 +779,144 @@ static void settings_rotate_screen(lv_event_t *e)
 
     ctx->settings.screen_rotation_step = (ctx->settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
     apply_rotation_to_display(false);
+}
+
+static void settings_set_date_time(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+
+    /* Close previous overlay if still open. */
+    if (ctx->datetime_overlay) {
+        lv_obj_del(ctx->datetime_overlay);
+        ctx->datetime_overlay = NULL;
+    }
+
+    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(overlay);
+    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_30, 0);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_CLICK_FOCUSABLE);
+    ctx->datetime_overlay = overlay;
+
+    lv_obj_t *dlg = lv_obj_create(overlay);
+    lv_obj_set_style_radius(dlg, 12, 0);
+    lv_obj_set_style_pad_all(dlg, 12, 0);
+    lv_obj_set_style_pad_gap(dlg, 6, 0);
+    lv_obj_set_size(dlg, lv_pct(82), lv_pct(70));
+    lv_obj_set_flex_flow(dlg, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(dlg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_center(dlg);
+
+    lv_obj_t *title = lv_label_create(dlg);
+    lv_label_set_text(title, "Set Date/Time");
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(title, LV_PCT(100));
+
+    /* Date row */
+    lv_obj_t *row_date = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_date);
+    lv_obj_set_flex_flow(row_date, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_date, 4, 0);
+    lv_obj_set_style_pad_all(row_date, 0, 0);
+    lv_obj_set_width(row_date, LV_PCT(100));
+    lv_obj_set_height(row_date, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(row_date, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *date_lbl = lv_label_create(row_date);
+    lv_label_set_text(date_lbl, "Date:");
+
+    ctx->dt_month_ta = lv_textarea_create(row_date);
+    lv_obj_set_width(ctx->dt_month_ta, 48);
+    lv_textarea_set_one_line(ctx->dt_month_ta, true);
+    lv_textarea_set_max_length(ctx->dt_month_ta, 2);
+    lv_textarea_set_text(ctx->dt_month_ta, "MM");
+
+    lv_obj_t *slash1 = lv_label_create(row_date);
+    lv_label_set_text(slash1, "/");
+
+    ctx->dt_day_ta = lv_textarea_create(row_date);
+    lv_obj_set_width(ctx->dt_day_ta, 48);
+    lv_textarea_set_one_line(ctx->dt_day_ta, true);
+    lv_textarea_set_max_length(ctx->dt_day_ta, 2);
+    lv_textarea_set_text(ctx->dt_day_ta, "DD");
+
+    lv_obj_t *slash2 = lv_label_create(row_date);
+    lv_label_set_text(slash2, "/");
+
+    ctx->dt_year_ta = lv_textarea_create(row_date);
+    lv_obj_set_width(ctx->dt_year_ta, 48);
+    lv_textarea_set_one_line(ctx->dt_year_ta, true);
+    lv_textarea_set_max_length(ctx->dt_year_ta, 2);
+    lv_textarea_set_text(ctx->dt_year_ta, "YY");
+
+    /* Time row */
+    lv_obj_t *row_time = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_time);
+    lv_obj_set_flex_flow(row_time, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_time, 4, 0);
+    lv_obj_set_style_pad_all(row_time, 0, 0);
+    lv_obj_set_width(row_time, LV_PCT(100));
+    lv_obj_set_height(row_time, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(row_time, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *time_lbl = lv_label_create(row_time);
+    lv_label_set_text(time_lbl, "Time:");
+
+    ctx->dt_hour_ta = lv_textarea_create(row_time);
+    lv_obj_set_width(ctx->dt_hour_ta, 48);
+    lv_textarea_set_one_line(ctx->dt_hour_ta, true);
+    lv_textarea_set_max_length(ctx->dt_hour_ta, 2);
+    lv_textarea_set_text(ctx->dt_hour_ta, "HH");
+
+    lv_obj_t *colon = lv_label_create(row_time);
+    lv_label_set_text(colon, ":");
+
+    ctx->dt_min_ta = lv_textarea_create(row_time);
+    lv_obj_set_width(ctx->dt_min_ta, 48);
+    lv_textarea_set_one_line(ctx->dt_min_ta, true);
+    lv_textarea_set_max_length(ctx->dt_min_ta, 2);
+    lv_textarea_set_text(ctx->dt_min_ta, "MM");
+
+    /* Action row */
+    lv_obj_t *row_actions = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_actions);
+    lv_obj_set_flex_flow(row_actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_actions, 6, 0);
+    lv_obj_set_style_pad_all(row_actions, 0, 0);
+    lv_obj_set_width(row_actions, LV_PCT(100));
+    lv_obj_set_height(row_actions, LV_SIZE_CONTENT);
+
+    lv_obj_t *apply_btn = lv_button_create(row_actions);
+    lv_obj_set_flex_grow(apply_btn, 1);
+    lv_obj_set_style_radius(apply_btn, 6, 0);
+    lv_obj_t *apply_lbl = lv_label_create(apply_btn);
+    lv_label_set_text(apply_lbl, "Apply");
+    lv_obj_center(apply_lbl);
+
+    lv_obj_t *cancel_btn = lv_button_create(row_actions);
+    lv_obj_set_flex_grow(cancel_btn, 1);
+    lv_obj_set_style_radius(cancel_btn, 6, 0);
+    lv_obj_t *cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_obj_add_event_cb(cancel_btn, settings_close_set_date_time, LV_EVENT_CLICKED, ctx);
+}
+
+static void settings_close_set_date_time(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->datetime_overlay)
+    {
+        return;
+    }    
+    if (ctx && ctx->datetime_overlay) {
+        lv_obj_del(ctx->datetime_overlay);
+        ctx->datetime_overlay = NULL;
+    }    
 }
 
 static void settings_on_brightness_changed(lv_event_t *e)
