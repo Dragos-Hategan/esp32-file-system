@@ -541,8 +541,14 @@ static bool ui_yes_no_dialog(const char *question)
 {
     bsp_display_lock(0);
 
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_t *mbox1 = lv_msgbox_create(scr);
+    /* Use the top layer so flex/grid layouts on the active screen don't affect positioning. */
+    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(overlay);
+    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_CLICK_FOCUSABLE);
+
+    lv_obj_t *mbox1 = lv_msgbox_create(overlay);
 
     lv_obj_set_style_max_width(mbox1, lv_pct(90), 0);
     lv_obj_align(mbox1, LV_ALIGN_CENTER, 0, -50);
@@ -564,7 +570,7 @@ static bool ui_yes_no_dialog(const char *question)
     lv_obj_add_event_cb(btn, event_cb, LV_EVENT_CLICKED, &msg_box_response);
 
     /* Compact container aligned exactly under the dialog */
-    lv_obj_t *loader_wrap = lv_obj_create(scr);
+    lv_obj_t *loader_wrap = lv_obj_create(overlay);
     lv_obj_remove_style_all(loader_wrap);
     lv_obj_set_style_pad_all(loader_wrap, 0, 0);
     lv_obj_set_style_border_width(loader_wrap, 0, 0);
@@ -592,7 +598,7 @@ static bool ui_yes_no_dialog(const char *question)
     lv_label_set_text(countdown_label, "10");
     lv_obj_center(countdown_label);
 
-    lv_obj_invalidate(scr);
+    lv_obj_invalidate(overlay);
     lv_refr_now(lv_disp_get_default());
 
     bsp_display_unlock();
@@ -650,9 +656,7 @@ static bool ui_yes_no_dialog(const char *question)
     }
 
     bsp_display_lock(0);
-    lv_msgbox_close(mbox1);
-    lv_obj_del(performing_label);
-    lv_obj_del(loading_arc);
+    lv_obj_del(overlay); /* deletes dialog and loader wrap */
     bsp_display_unlock();
 
     vSemaphoreDelete(msg_box_response.xSemaphore);

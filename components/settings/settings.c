@@ -2,6 +2,9 @@
 
 #include <stddef.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include "bsp/esp-bsp.h"
 #include "Domine_14.h"
 #include "nvs_flash.h"
@@ -20,6 +23,9 @@
 #define SETTINGS_DEFAULT_ROTATION_STEP   3
 #define SETTINGS_MINIMUM_BRIGHTNESS      10   /**< Lowest brightness percent to avoid black screen */
 #define SETTINGS_DEFAULT_BRIGHTNESS      100
+
+#define SETTINGS_CALIBRATION_TASK_STACK  (6 * 1024)
+#define SETTINGS_CALIBRATION_TASK_PRIO   (5)
 
 #define STR_HELPER(x)               #x
 #define STR(x)                      STR_HELPER(x)
@@ -43,7 +49,6 @@ typedef struct{
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
-static settings_t s_settings;
 static settings_ctx_t s_settings_ctx;
 static const char *TAG = "settings";
 
@@ -156,6 +161,7 @@ static void settings_reset_confirm(lv_event_t *e);
 static void settings_close_reset(lv_event_t *e);
 
 static void settings_run_calibration(lv_event_t *e);
+static void settings_calibration_task(void *param);
 
 /**
  * @brief Initialize the Non-Volatile Storage (NVS) flash partition.
@@ -197,7 +203,7 @@ static void apply_default_font_theme(bool lock_display);
 /**
  * @brief Apply the current rotation step to the active LVGL display.
  *
- * Maps @ref s_settings.screen_rotation_step to an LVGL display rotation and sets it,
+ * Maps @ref s_settings_ctx.settings.screen_rotation_step to an LVGL display rotation and sets it,
  * clamping to a valid state if needed. Logs a warning when no display exists.
  *
  * @param[in] lock_display True when calling from non-LVGL context (takes display lock);
@@ -206,7 +212,7 @@ static void apply_default_font_theme(bool lock_display);
 static void apply_rotation_to_display(bool lock_display);
 
 /**
- * @brief Load persisted rotation step from NVS into @ref s_settings.
+ * @brief Load persisted rotation step from NVS into @ref s_settings_ctx.settings.
  *
  * Reads @ref SETTINGS_NVS_ROT_KEY from @ref SETTINGS_NVS_NS; keeps the
  * default if the key or namespace is missing or out of range.
@@ -216,7 +222,7 @@ static void load_rotation_from_nvs(void);
 /**
  * @brief Persist current rotation step to NVS.
  *
- * Writes @ref s_settings.screen_rotation_step to @ref SETTINGS_NVS_ROT_KEY inside
+ * Writes @ref s_settings_ctx.settings.screen_rotation_step to @ref SETTINGS_NVS_ROT_KEY inside
  * @ref SETTINGS_NVS_NS, logging warnings on failure but not aborting flow.
  */
 static void persist_rotation_to_nvs(void);
@@ -376,7 +382,7 @@ static void settings_build_screen(settings_ctx_t *ctx)
     ctx->brightness_slider = lv_slider_create(brightness_card);
     lv_obj_set_width(ctx->brightness_slider, LV_PCT(90));
     lv_slider_set_range(ctx->brightness_slider, SETTINGS_MINIMUM_BRIGHTNESS, 100);
-    lv_slider_set_value(ctx->brightness_slider, s_settings.brightness, LV_ANIM_OFF);
+    lv_slider_set_value(ctx->brightness_slider, ctx->settings.brightness, LV_ANIM_OFF);
     lv_obj_add_event_cb(ctx->brightness_slider, settings_on_brightness_changed, LV_EVENT_VALUE_CHANGED, ctx);
     lv_obj_set_style_bg_color(ctx->brightness_slider, lv_palette_main(LV_PALETTE_GREEN), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(ctx->brightness_slider, lv_palette_main(LV_PALETTE_RED), LV_PART_KNOB);
@@ -520,13 +526,13 @@ static void settings_close(settings_ctx_t *ctx)
         int val = lv_slider_get_value(ctx->brightness_slider);
         if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
         if (val > 100) val = 100;
-        s_settings.brightness = val;
-        if (s_settings.brightness != s_settings.saved_brightness) {
+        ctx->settings.brightness = val;
+        if (ctx->settings.brightness != ctx->settings.saved_brightness) {
             persist_brightness_to_nvs();
         }
     }
 
-    if (s_settings.screen_rotation_step != s_settings.saved_rotation_step) {
+    if (ctx->settings.screen_rotation_step != ctx->settings.saved_rotation_step) {
         persist_rotation_to_nvs();
     }
 
@@ -612,13 +618,13 @@ static void apply_rotation_to_display(bool lock_display)
     }
 
     /* Map state index to rotation (0:270, 1:180, 2:90, 3:0). */
-    switch (s_settings.screen_rotation_step % SETTINGS_ROTATION_STEPS) {
+    switch (s_settings_ctx.settings.screen_rotation_step % SETTINGS_ROTATION_STEPS) {
         case 0: lv_display_set_rotation(display, LV_DISPLAY_ROTATION_270); break;
         case 1: lv_display_set_rotation(display, LV_DISPLAY_ROTATION_180); break;
         case 2: lv_display_set_rotation(display, LV_DISPLAY_ROTATION_90);  break;
         case 3: lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);   break;
         default:
-            s_settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
+            s_settings_ctx.settings.screen_rotation_step = SETTINGS_ROTATION_STEPS - 1;
             lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);
             break;
     }
@@ -637,13 +643,13 @@ static void load_rotation_from_nvs(void)
         return;
     }
 
-    int32_t stored = s_settings.screen_rotation_step;
+    int32_t stored = s_settings_ctx.settings.screen_rotation_step;
     err = nvs_get_i32(h, SETTINGS_NVS_ROT_KEY, &stored);
     nvs_close(h);
 
     if (err == ESP_OK && stored >= 0 && stored < SETTINGS_ROTATION_STEPS) {
-        s_settings.screen_rotation_step = (int)stored;
-        s_settings.saved_rotation_step = s_settings.screen_rotation_step;
+        s_settings_ctx.settings.screen_rotation_step = (int)stored;
+        s_settings_ctx.settings.saved_rotation_step = s_settings_ctx.settings.screen_rotation_step;
     }
 }
 
@@ -656,7 +662,7 @@ static void persist_rotation_to_nvs(void)
         return;
     }
 
-    err = nvs_set_i32(h, SETTINGS_NVS_ROT_KEY, s_settings.screen_rotation_step);
+    err = nvs_set_i32(h, SETTINGS_NVS_ROT_KEY, s_settings_ctx.settings.screen_rotation_step);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
@@ -665,7 +671,7 @@ static void persist_rotation_to_nvs(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to save rotation to NVS: %s", esp_err_to_name(err));
     } else {
-        s_settings.saved_rotation_step = s_settings.screen_rotation_step;
+        s_settings_ctx.settings.saved_rotation_step = s_settings_ctx.settings.screen_rotation_step;
     }
 }
 
@@ -674,8 +680,8 @@ static void load_brightness_from_nvs(void)
     nvs_handle_t h;
     esp_err_t err = nvs_open(SETTINGS_NVS_NS, NVS_READONLY, &h);
     if (err != ESP_OK) {
-        s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
-        s_settings.saved_brightness = s_settings.brightness;
+        s_settings_ctx.settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+        s_settings_ctx.settings.saved_brightness = s_settings_ctx.settings.brightness;
         return;
     }
 
@@ -684,11 +690,11 @@ static void load_brightness_from_nvs(void)
     nvs_close(h);
 
     if (err == ESP_OK && stored >= SETTINGS_MINIMUM_BRIGHTNESS && stored <= 100) {
-        s_settings.brightness = (int)stored;
-        s_settings.saved_brightness = s_settings.brightness;
+        s_settings_ctx.settings.brightness = (int)stored;
+        s_settings_ctx.settings.saved_brightness = s_settings_ctx.settings.brightness;
     } else {
-        s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
-        s_settings.saved_brightness = s_settings.brightness;
+        s_settings_ctx.settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+        s_settings_ctx.settings.saved_brightness = s_settings_ctx.settings.brightness;
     }
 }
 
@@ -701,7 +707,7 @@ static void persist_brightness_to_nvs(void)
         return;
     }
 
-    err = nvs_set_i32(h, SETTINGS_NVS_BRIGHTNESS_KEY, s_settings.brightness);
+    err = nvs_set_i32(h, SETTINGS_NVS_BRIGHTNESS_KEY, s_settings_ctx.settings.brightness);
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
@@ -710,20 +716,20 @@ static void persist_brightness_to_nvs(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to save brightness to NVS: %s", esp_err_to_name(err));
     } else {
-        s_settings.saved_brightness = s_settings.brightness;
+        s_settings_ctx.settings.saved_brightness = s_settings_ctx.settings.brightness;
     }
 }
 
 static void init_settings(void)
 {
     /* Default state corresponds to 0-degree rotation (state 3 in our sequence). */
-    s_settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
-    s_settings.saved_rotation_step = s_settings.screen_rotation_step;
-    s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
-    s_settings.saved_brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+    s_settings_ctx.settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
+    s_settings_ctx.settings.saved_rotation_step = s_settings_ctx.settings.screen_rotation_step;
+    s_settings_ctx.settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+    s_settings_ctx.settings.saved_brightness = SETTINGS_DEFAULT_BRIGHTNESS;
     load_brightness_from_nvs();
     load_rotation_from_nvs();
-    bsp_display_brightness_set(s_settings.brightness);
+    bsp_display_brightness_set(s_settings_ctx.settings.brightness);
     apply_rotation_to_display(true);
 }
 
@@ -735,7 +741,7 @@ static void settings_rotate_screen(lv_event_t *e)
         return;
     }
 
-    s_settings.screen_rotation_step = (s_settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
+    ctx->settings.screen_rotation_step = (ctx->settings.screen_rotation_step + 1) % SETTINGS_ROTATION_STEPS;
     apply_rotation_to_display(false);
 }
 
@@ -749,7 +755,7 @@ static void settings_on_brightness_changed(lv_event_t *e)
     int val = lv_slider_get_value(ctx->brightness_slider);
     if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
     if (val > 100) val = 100;
-    s_settings.brightness = val;
+    ctx->settings.brightness = val;
     char txt[32];
     lv_snprintf(txt, sizeof(txt), "Brightness: %d%%", val);
     lv_label_set_text(ctx->brightness_label, txt);
@@ -792,12 +798,12 @@ static void settings_restart_confirm(lv_event_t *e)
         int val = lv_slider_get_value(ctx->brightness_slider);
         if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
         if (val > 100) val = 100;
-        s_settings.brightness = val;
-        if (s_settings.brightness != s_settings.saved_brightness) {
+        ctx->settings.brightness = val;
+        if (ctx->settings.brightness != ctx->settings.saved_brightness) {
             persist_brightness_to_nvs();
         }
     }
-    if (s_settings.screen_rotation_step != s_settings.saved_rotation_step) {
+    if (ctx->settings.screen_rotation_step != ctx->settings.saved_rotation_step) {
         persist_rotation_to_nvs();
     }
     esp_restart();
@@ -852,12 +858,12 @@ static void settings_reset_confirm(lv_event_t *e)
         return;
     }  
 
-    s_settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
-    s_settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
-    lv_slider_set_value(ctx->brightness_slider, s_settings.brightness, LV_ANIM_OFF);
+    ctx->settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
+    ctx->settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
+    lv_slider_set_value(ctx->brightness_slider, ctx->settings.brightness, LV_ANIM_OFF);
     
     char brightness_txt[32];
-    lv_snprintf(brightness_txt, sizeof(brightness_txt), "Brightness: %d%%", s_settings.brightness);
+    lv_snprintf(brightness_txt, sizeof(brightness_txt), "Brightness: %d%%", ctx->settings.brightness);
     lv_label_set_text(ctx->brightness_label, brightness_txt);    
 
     persist_brightness_to_nvs();
@@ -890,8 +896,39 @@ static void settings_run_calibration(lv_event_t *e)
     }
 
     lv_obj_clean(ctx->screen);
-    ctx->screen = NULL;
     ctx->active = false;
+    ctx->screen = NULL;
+
+    /* Run calibration asynchronously to avoid blocking the LVGL task/UI thread. */
+    xTaskCreate(settings_calibration_task,
+                "settings_calibration",
+                SETTINGS_CALIBRATION_TASK_STACK,
+                ctx,
+                SETTINGS_CALIBRATION_TASK_PRIO,
+                NULL);
+}
+
+static void settings_calibration_task(void *param)
+{
+    settings_ctx_t *ctx = (settings_ctx_t *)param;
+
+    if (!ctx || !ctx->return_screen){
+        return;
+    }
+    
+    if (ctx->settings.screen_rotation_step != SETTINGS_DEFAULT_ROTATION_STEP && ctx->settings.screen_rotation_step != SETTINGS_DEFAULT_ROTATION_STEP - 2){
+        ctx->settings.screen_rotation_step = SETTINGS_DEFAULT_ROTATION_STEP;
+        apply_rotation_to_display(true);
+    }
+
     calibration_test(true);
+
+    ctx->settings.screen_rotation_step = ctx->settings.saved_rotation_step;
+    apply_rotation_to_display(true);
+    
+    bsp_display_lock(0);
     settings_open_settings(ctx->return_screen);
+    bsp_display_unlock();
+    
+    vTaskDelete(NULL);
 }
