@@ -59,6 +59,8 @@ void settings_shutdown_save_time(void);
  */
 bool settings_is_time_valid();
 
+void settings_start_screensaver_timers(void);
+
 #ifdef __cplusplus
 }
 #endif

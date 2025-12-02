@@ -65,6 +65,14 @@ lv_indev_t *touch_get_indev(void);
  */
 esp_lcd_touch_handle_t touch_get_handle(void);
 
+/**
+ * @brief Log a touch press with calibrated coordinates.
+ *
+ * @param x Calibrated X coordinate
+ * @param y Calibrated Y coordinate
+ */
+void touch_log_press(uint16_t x, uint16_t y);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,5 +10,6 @@ idf_component_register(
         esp_bsp_generic
         esp_driver_spi
         nvs_flash
+        settings
         freertos
 )

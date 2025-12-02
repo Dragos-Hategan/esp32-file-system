@@ -227,7 +227,6 @@ static void settings_run_calibration(lv_event_t *e);
 
 static void settings_screensaver(lv_event_t *e);
 static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx);
-static void settings_start_screensaver_timers(settings_ctx_t *ctx);
 static void settings_apply_screensaver(lv_event_t *e);
 static void settings_close_screensaver(lv_event_t *e);
 
@@ -645,6 +644,27 @@ void settings_shutdown_save_time(void)
 bool settings_is_time_valid()
 {
     return s_settings_ctx.settings.time_valid == true;
+}
+
+void settings_start_screensaver_timers(void)
+{
+    bool dim_allowed = s_settings_ctx.settings.screen_dim &&
+                        (!s_settings_ctx.settings.screen_off ||
+                        s_settings_ctx.settings.off_time <= 0 ||
+                        s_settings_ctx.settings.dim_time <= 0 ||
+                        s_settings_ctx.settings.dim_time < s_settings_ctx.settings.off_time);
+
+    if (dim_allowed) {
+        screensaver_dim_start(s_settings_ctx.settings.dim_time, s_settings_ctx.settings.dim_level);
+    } else {
+        screensaver_dim_stop();
+    }
+
+    if (s_settings_ctx.settings.screen_off) {
+        screensaver_off_start(s_settings_ctx.settings.off_time);
+    } else {
+        screensaver_off_stop();
+    }
 }
 
 static void settings_build_screen(settings_ctx_t *ctx)
@@ -2663,7 +2683,7 @@ static void settings_apply_screensaver(lv_event_t *e)
     persist_screensaver_to_nvs();
 
     /* Start/stop timers */
-    settings_start_screensaver_timers(ctx);
+    //settings_start_screensaver_timers(ctx);
 
     settings_close_screensaver(e);
 }
@@ -2690,27 +2710,4 @@ static void settings_close_screensaver(lv_event_t *e)
         ctx->ss_off_after_ta = NULL;
         ctx->ss_keyboard = NULL;
     }    
-}
-
-static void settings_start_screensaver_timers(settings_ctx_t *ctx)
-{
-    if (ctx){
-        bool dim_allowed = ctx->settings.screen_dim &&
-                           (!ctx->settings.screen_off ||
-                            ctx->settings.off_time <= 0 ||
-                            ctx->settings.dim_time <= 0 ||
-                            ctx->settings.dim_time < ctx->settings.off_time);
-    
-        if (dim_allowed) {
-            screensaver_dim_start(ctx->settings.dim_time, ctx->settings.dim_level);
-        } else {
-            screensaver_dim_stop();
-        }
-    
-        if (ctx->settings.screen_off) {
-            screensaver_off_start(ctx->settings.off_time);
-        } else {
-            screensaver_off_stop();
-        }
-    }
 }

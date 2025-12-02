@@ -9,6 +9,7 @@
 
 #include "esp_lcd_touch_xpt2046.h"
 #include "calibration_xpt2046.h"
+#include "settings.h"
 
 const char* TAG_TOUCH = "touch_driver";
 static esp_lcd_touch_handle_t touch_handle = NULL;
@@ -152,6 +153,11 @@ esp_lcd_touch_handle_t touch_get_handle(void)
     return touch_handle;
 }
 
+void touch_log_press(uint16_t x, uint16_t y)
+{
+    ESP_LOGI(TAG_TOUCH, "Touch press: x=%u y=%u", (unsigned)x, (unsigned)y);
+}
+
 static lv_indev_t *register_touch_with_lvgl(void)
 {
     // LVGL v9:
@@ -166,6 +172,7 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     uint16_t x, y;
     uint8_t btn = 0;
     bool pressed = false;
+    static bool prev_pressed = false;
 
     if (touch_handle)
     {
@@ -180,5 +187,10 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     }
 
     data->state = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    if (pressed && !prev_pressed) {
+        touch_log_press(x, y);
+        settings_start_screensaver_timers();
+    }
+    prev_pressed = pressed;
     (void)indev;
 }
