@@ -411,6 +411,7 @@ static bool settings_is_descendant(lv_obj_t *obj, lv_obj_t *maybe_ancestor);
  * @return true if the date is valid, false otherwise.
  */
 static bool settings_is_valid_date(int year_full, int month, int day);
+
 /**
  * @brief Notify registered listeners that time was set via dialog Apply.
  */
@@ -421,20 +422,22 @@ static void settings_notify_time_set(void);
  */
 static void settings_notify_time_reset(void);
 
-  /**
-   * @brief Restore system time from NVS only after a software reset; clear otherwise.
-   */
-  static void settings_restore_time_from_nvs(void);
-  /**
-   * @brief Persist the given epoch seconds to NVS.
-   *
-   * @param epoch Epoch seconds to store.
-   */
-  static void settings_persist_time_to_nvs(time_t epoch);
-  /**
-   * @brief Erase the stored time key from NVS.
-   */
-  static void settings_clear_time_in_nvs(void);
+/**
+ * @brief Restore system time from NVS only after a software reset; clear otherwise.
+ */
+static void settings_restore_time_from_nvs(void);
+
+/**
+ * @brief Persist the given epoch seconds to NVS.
+ *
+ * @param epoch Epoch seconds to store.
+ */
+static void settings_persist_time_to_nvs(time_t epoch);
+
+/**
+ * @brief Erase the stored time key from NVS.
+ */
+static void settings_clear_time_in_nvs(void);
 
 /* Callbacks registered by other modules to react to time set/reset events. */
 static void (*s_time_set_cb)(void) = NULL;
@@ -442,31 +445,27 @@ static void (*s_time_reset_cb)(void) = NULL;
 
 void starting_routine(void)
 {
-    /* ----- Init NSV ----- */
+    /* ----- NSV ----- */
     ESP_LOGI(TAG, "Initializing NVS");
     ESP_ERROR_CHECK(init_nvs());
 
-    /* ----- Init Display and LVGL ----- */
+    /* ----- Display and LVGL ----- */
     ESP_LOGI(TAG, "Starting bsp for ILI9341 display");
     ESP_ERROR_CHECK(bsp_display_start_result()); 
     apply_default_font_theme(true);
 
+    /* ----- Configurations ----- */
+    ESP_LOGI(TAG, "Loading configurations");
     init_settings();
 
-    /* ----- Init XPT2046 Touch Driver ----- */
+    /* ----- XPT2046 Touch Driver ----- */
     ESP_LOGI(TAG, "Initializing XPT2046 touch driver");
     ESP_ERROR_CHECK(init_touch()); 
-
-    /* ----- Register Touch Driver To LVGL ----- */
     ESP_LOGI(TAG, "Registering touch driver to LVGL");
     ESP_ERROR_CHECK(register_touch_to_lvgl());
-
-    /* ----- Load XPT2046 Touch Driver Calibration ----- */
     bool calibration_found;
     ESP_LOGI(TAG, "Check for touch driver calibration data");
     load_nvs_calibration(&calibration_found);
-
-    /* ----- Calibration Test ----- */
     ESP_LOGI(TAG, "Start calibration dialog");
     ESP_ERROR_CHECK(calibration_test(calibration_found));
 }

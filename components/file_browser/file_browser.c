@@ -1860,9 +1860,6 @@ void file_browser_reset_clock_display(void)
     }
 }
 
-/**
- * @brief Mark the clock as user-set and refresh the header label/button state.
- */
 void file_browser_on_time_set(void)
 {
     file_browser_ctx_t *ctx = &s_browser;

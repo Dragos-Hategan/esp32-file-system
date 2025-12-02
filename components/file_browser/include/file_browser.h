@@ -35,7 +35,7 @@ esp_err_t file_browser_start(void);
 void file_browser_reset_clock_display(void);
 
 /**
- * @brief Notify the file browser that the user set date/time (show label, hide button).
+ * @brief Mark the clock as user-set and refresh the header label/button state.
  */
 void file_browser_on_time_set(void);
 
