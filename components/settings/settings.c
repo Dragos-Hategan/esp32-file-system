@@ -67,6 +67,14 @@ typedef struct{
     lv_obj_t *dt_dialog;                /**< Date/time dialog container */
     lv_obj_t *screensaver_dialog;                /**< Date/time dialog container */
     lv_obj_t *dt_row_time;              /**< Time row container */
+    lv_obj_t *ss_dim_lbl;               /**< Screensaver dimming label */
+    lv_obj_t *ss_dim_switch;            /**< Screensaver dimming on/off switch */
+    lv_obj_t *ss_dim_after_lbl;         /**< Label: "Dim after" */
+    lv_obj_t *ss_seconds_lbl;           /**< Label: "seconds" */
+    lv_obj_t *ss_at_lbl;                /**< Label: "at" */
+    lv_obj_t *ss_pct_lbl;               /**< Label: "%" */
+    lv_obj_t *ss_dim_after_ta;          /**< Screensaver dim delay input (seconds) */
+    lv_obj_t *ss_dim_pct_ta;            /**< Screensaver dim level input (%) */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
@@ -399,6 +407,21 @@ static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta);
  * @param ctx Settings context.
  */
 static void settings_hide_dt_keyboard(settings_ctx_t *ctx);
+
+/**
+ * @brief Focus/click handler for screensaver numeric fields (dim delay/percent).
+ */
+static void settings_on_ss_textarea_focus(lv_event_t *e);
+
+/**
+ * @brief Toggle handler for screensaver dim switch to enable/disable related fields.
+ */
+static void settings_on_dim_switch_changed(lv_event_t *e);
+
+/**
+ * @brief Apply enabled/disabled state to dimming controls based on switch state.
+ */
+static void settings_update_dim_controls_enabled(settings_ctx_t *ctx, bool enabled);
 
 /**
  * @brief Utility to check if an object is a descendant of another.
@@ -1369,7 +1392,9 @@ static void settings_on_dt_background_tap(lv_event_t *e)
         settings_is_descendant(target, ctx->dt_day_ta) ||
         settings_is_descendant(target, ctx->dt_year_ta) ||
         settings_is_descendant(target, ctx->dt_hour_ta) ||
-        settings_is_descendant(target, ctx->dt_min_ta)) {
+        settings_is_descendant(target, ctx->dt_min_ta) ||
+        settings_is_descendant(target, ctx->ss_dim_after_ta) ||
+        settings_is_descendant(target, ctx->ss_dim_pct_ta)) {
         return;
     }
 
@@ -1392,6 +1417,86 @@ static void settings_on_dt_keyboard_event(lv_event_t *e)
         return;
     }
     settings_hide_dt_keyboard(ctx);
+}
+
+static void settings_on_ss_textarea_focus(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || !ctx->dt_keyboard) {
+        return;
+    }
+
+    lv_obj_t *ta = lv_event_get_target(e);
+    if (lv_obj_has_state(ta, LV_STATE_DISABLED)) {
+        return;
+    }
+    lv_keyboard_set_textarea(ctx->dt_keyboard, ta);
+    lv_obj_clear_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_scroll_to_view(ta, LV_ANIM_ON);
+}
+
+static void settings_on_dim_switch_changed(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    lv_obj_t *sw = lv_event_get_target(e);
+    bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    if (!enabled) {
+        settings_hide_dt_keyboard(ctx);
+    }
+    settings_update_dim_controls_enabled(ctx, enabled);
+}
+
+static void settings_update_dim_controls_enabled(settings_ctx_t *ctx, bool enabled)
+{
+    if (!ctx) {
+        return;
+    }
+
+    lv_obj_t *labels[] = {
+        ctx->ss_dim_lbl,
+        ctx->ss_dim_after_lbl,
+        ctx->ss_seconds_lbl,
+        ctx->ss_at_lbl,
+        ctx->ss_pct_lbl,
+    };
+    for (size_t i = 0; i < sizeof(labels)/sizeof(labels[0]); i++) {
+        lv_obj_t *lbl = labels[i];
+        if (!lbl) {
+            continue;
+        }
+        if (enabled) {
+            lv_obj_clear_state(lbl, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(lbl, LV_STATE_DISABLED);
+        }
+    }
+
+    lv_obj_t *textareas[] = {
+        ctx->ss_dim_after_ta,
+        ctx->ss_dim_pct_ta,
+    };
+    for (size_t i = 0; i < sizeof(textareas)/sizeof(textareas[0]); i++) {
+        lv_obj_t *ta = textareas[i];
+        if (!ta) {
+            continue;
+        }
+        if (enabled) {
+            lv_obj_clear_state(ta, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(ta, LV_STATE_DISABLED);
+        }
+    }
+
+    if (!enabled && ctx->dt_keyboard) {
+        lv_obj_t *attached = lv_keyboard_get_textarea(ctx->dt_keyboard);
+        if (attached == ctx->ss_dim_after_ta || attached == ctx->ss_dim_pct_ta) {
+            lv_keyboard_set_textarea(ctx->dt_keyboard, NULL);
+            lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta)
@@ -1741,6 +1846,15 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
         lv_obj_del(ctx->screensaver_overlay);
         ctx->screensaver_overlay = NULL;
         ctx->screensaver_dialog = NULL;
+        ctx->ss_dim_lbl = NULL;
+        ctx->ss_dim_switch = NULL;
+        ctx->ss_dim_after_lbl = NULL;
+        ctx->ss_seconds_lbl = NULL;
+        ctx->ss_at_lbl = NULL;
+        ctx->ss_pct_lbl = NULL;
+        ctx->ss_dim_after_ta = NULL;
+        ctx->ss_dim_pct_ta = NULL;
+        ctx->dt_keyboard = NULL;
     }
 
     lv_obj_t *overlay = lv_obj_create(lv_layer_top());
@@ -1788,9 +1902,62 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     lv_obj_t *dim_lbl = lv_label_create(row_dim);
     lv_label_set_text(dim_lbl, "Dimming");
     lv_obj_add_flag(dim_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_dim_lbl = dim_lbl;
 
     lv_obj_t *dim_switch = lv_switch_create(row_dim);
     lv_obj_set_style_pad_all(dim_switch, 4, 0);
+    lv_obj_add_state(dim_switch, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(dim_switch, settings_on_dim_switch_changed, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->ss_dim_switch = dim_switch;
+
+    /* Dim timing/level row */
+    lv_obj_t *row_dim_cfg = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_dim_cfg);
+    lv_obj_set_flex_flow(row_dim_cfg, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_dim_cfg, 4, 0);
+    lv_obj_set_style_pad_all(row_dim_cfg, 0, 0);
+    lv_obj_set_width(row_dim_cfg, LV_PCT(100));
+    lv_obj_set_height(row_dim_cfg, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(row_dim_cfg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_flag(row_dim_cfg, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lv_obj_t *dim_after_lbl = lv_label_create(row_dim_cfg);
+    lv_label_set_text(dim_after_lbl, "Dim after");
+    lv_obj_add_flag(dim_after_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_dim_after_lbl = dim_after_lbl;
+
+    ctx->ss_dim_after_ta = lv_textarea_create(row_dim_cfg);
+    lv_obj_set_width(ctx->ss_dim_after_ta, 35);
+    lv_obj_clear_flag(ctx->ss_dim_after_ta, LV_OBJ_FLAG_SCROLLABLE);
+    lv_textarea_set_one_line(ctx->ss_dim_after_ta, true);
+    lv_textarea_set_max_length(ctx->ss_dim_after_ta, 3);
+    lv_textarea_set_placeholder_text(ctx->ss_dim_after_ta, "");
+    lv_obj_add_event_cb(ctx->ss_dim_after_ta, settings_on_ss_textarea_focus, LV_EVENT_FOCUSED, ctx);
+    lv_obj_add_event_cb(ctx->ss_dim_after_ta, settings_on_ss_textarea_focus, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *seconds_lbl = lv_label_create(row_dim_cfg);
+    lv_label_set_text(seconds_lbl, "seconds");
+    lv_obj_add_flag(seconds_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_seconds_lbl = seconds_lbl;
+
+    lv_obj_t *at_lbl = lv_label_create(row_dim_cfg);
+    lv_label_set_text(at_lbl, "to");
+    lv_obj_add_flag(at_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_at_lbl = at_lbl;
+
+    ctx->ss_dim_pct_ta = lv_textarea_create(row_dim_cfg);
+    lv_obj_set_width(ctx->ss_dim_pct_ta, 35);
+    lv_obj_clear_flag(ctx->ss_dim_pct_ta, LV_OBJ_FLAG_SCROLLABLE);
+    lv_textarea_set_one_line(ctx->ss_dim_pct_ta, true);
+    lv_textarea_set_max_length(ctx->ss_dim_pct_ta, 3);
+    lv_textarea_set_placeholder_text(ctx->ss_dim_pct_ta, "");
+    lv_obj_add_event_cb(ctx->ss_dim_pct_ta, settings_on_ss_textarea_focus, LV_EVENT_FOCUSED, ctx);
+    lv_obj_add_event_cb(ctx->ss_dim_pct_ta, settings_on_ss_textarea_focus, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *pct_lbl = lv_label_create(row_dim_cfg);
+    lv_label_set_text(pct_lbl, "%");
+    lv_obj_add_flag(pct_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_pct_lbl = pct_lbl;
 
     /* Off row */
     lv_obj_t *row_off = lv_obj_create(dlg);
@@ -1859,6 +2026,15 @@ static void settings_apply_screensaver(lv_event_t *e)
         lv_obj_del(ctx->screensaver_overlay);
         ctx->screensaver_overlay = NULL;
         ctx->screensaver_dialog = NULL;
+        ctx->ss_dim_lbl = NULL;
+        ctx->ss_dim_switch = NULL;
+        ctx->ss_dim_after_lbl = NULL;
+        ctx->ss_seconds_lbl = NULL;
+        ctx->ss_at_lbl = NULL;
+        ctx->ss_pct_lbl = NULL;
+        ctx->ss_dim_after_ta = NULL;
+        ctx->ss_dim_pct_ta = NULL;
+        ctx->dt_keyboard = NULL;
     }  
 }
 
@@ -1869,5 +2045,14 @@ static void settings_close_screensaver(lv_event_t *e)
         lv_obj_del(ctx->screensaver_overlay);
         ctx->screensaver_overlay = NULL;
         ctx->screensaver_dialog = NULL;
+        ctx->ss_dim_lbl = NULL;
+        ctx->ss_dim_switch = NULL;
+        ctx->ss_dim_after_lbl = NULL;
+        ctx->ss_seconds_lbl = NULL;
+        ctx->ss_at_lbl = NULL;
+        ctx->ss_pct_lbl = NULL;
+        ctx->ss_dim_after_ta = NULL;
+        ctx->ss_dim_pct_ta = NULL;
+        ctx->dt_keyboard = NULL;
     }    
 }
