@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 
 #include "calibration_xpt2046.h"
 #include "touch_xpt2046.h"
@@ -35,6 +36,8 @@
 
 #define SETTINGS_CALIBRATION_TASK_STACK  (6 * 1024)
 #define SETTINGS_CALIBRATION_TASK_PRIO   (5)
+#define SETTINGS_DIM_FADE_MS             500
+#define SETTINGS_OFF_FADE_MS             500
 
 #define STR_HELPER(x)               #x
 #define STR(x)                      STR_HELPER(x)
@@ -96,6 +99,11 @@ typedef struct{
 
 static settings_ctx_t s_settings_ctx;
 static const char *TAG = "settings";
+static esp_timer_handle_t s_ss_off_timer = NULL;
+static esp_timer_handle_t s_fade_timer = NULL;
+static int s_fade_target = 0;
+static int s_fade_steps_left = 0;
+static int s_fade_direction = 0;
 
 /**
  * @brief Build the settings screen (header + scrollable settings list).
@@ -481,6 +489,22 @@ static void settings_on_off_switch_changed(lv_event_t *e);
  * @brief Apply enabled/disabled state to off controls based on switch state.
  */
 static void settings_update_off_controls_enabled(settings_ctx_t *ctx, bool enabled);
+
+/**
+ * @brief esp_timer callback for delayed screen off.
+ */
+static void settings_off_timer_cb(void *arg);
+
+/**
+ * @brief Helper to animate brightness to a target percentage over a duration using esp_timer.
+ */
+static void settings_fade_brightness(int target_pct, uint32_t duration_ms);
+static void settings_fade_step_cb(void *arg);
+
+/**
+ * @brief LVGL anim executor for brightness changes.
+ */
+static void settings_anim_set_brightness(void *var, int32_t v);
 
 /**
  * @brief Utility to check if an object is a descendant of another.
@@ -1784,13 +1808,122 @@ static void screensaver_dim_stop(void)
 static void screensaver_off_start(int seconds)
 {
     ESP_LOGI(TAG, "Start screen-off timer: %ds", seconds);
-    /* TODO: wire actual screen-off timer start here. */
+    if (s_ss_off_timer == NULL) {
+        const esp_timer_create_args_t args = {
+            .callback = settings_off_timer_cb,
+            .arg = NULL,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "ss_off",
+        };
+        esp_err_t err = esp_timer_create(&args, &s_ss_off_timer);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create off timer: %s", esp_err_to_name(err));
+            return;
+        }
+    } else {
+        esp_timer_stop(s_ss_off_timer);
+    }
+
+    int64_t us = (seconds < 0 ? 0 : seconds) * 1000000LL;
+    esp_err_t err = esp_timer_start_once(s_ss_off_timer, us);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start off timer: %s", esp_err_to_name(err));
+    }
 }
 
 static void screensaver_off_stop(void)
 {
     ESP_LOGI(TAG, "Stop screen-off timer");
-    /* TODO: wire actual screen-off timer stop here. */
+    if (s_ss_off_timer) {
+        esp_timer_stop(s_ss_off_timer);
+    }
+    settings_fade_brightness(s_settings_ctx.settings.brightness, 0); /* stop any ongoing fade */
+}
+
+static void settings_off_timer_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "Off timer fired: fading screen off");
+    settings_fade_brightness(0, SETTINGS_OFF_FADE_MS);
+}
+
+static void settings_fade_brightness(int target_pct, uint32_t duration_ms)
+{
+    if (target_pct > 100) target_pct = 100;
+    if (target_pct < 0) target_pct = 0;
+
+    settings_ctx_t *ctx = &s_settings_ctx;
+    int start = ctx->settings.brightness;
+    if (duration_ms == 0 || start == target_pct) {
+        ctx->settings.brightness = target_pct;
+        bsp_display_brightness_set(target_pct);
+        return;
+    }
+
+    /* Stop existing fade timer */
+    if (s_fade_timer) {
+        esp_timer_stop(s_fade_timer);
+    } else {
+        const esp_timer_create_args_t args = {
+            .callback = settings_fade_step_cb,
+            .arg = NULL,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "fade",
+        };
+        if (esp_timer_create(&args, &s_fade_timer) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create fade timer");
+            return;
+        }
+    }
+
+    s_fade_target = target_pct;
+    s_fade_direction = (target_pct > start) ? 1 : -1;
+    s_fade_steps_left = (start > target_pct) ? (start - target_pct) : (target_pct - start);
+    if (s_fade_steps_left == 0) {
+        ctx->settings.brightness = target_pct;
+        bsp_display_brightness_set(target_pct);
+        return;
+    }
+
+    int64_t interval_us = (duration_ms * 1000ULL) / s_fade_steps_left;
+    if (interval_us < 1000) interval_us = 1000;
+
+    esp_err_t err = esp_timer_start_periodic(s_fade_timer, interval_us);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start fade timer: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Fade start: %d -> %d over %ums (step %lldus)", start, target_pct, duration_ms, interval_us);
+    }
+}
+
+static void settings_fade_step_cb(void *arg)
+{
+    (void)arg;
+    if (s_fade_steps_left <= 0) {
+        if (s_fade_timer) {
+            esp_timer_stop(s_fade_timer);
+        }
+        s_settings_ctx.settings.brightness = s_fade_target;
+        bsp_display_brightness_set(s_fade_target);
+        ESP_LOGI(TAG, "Fade complete -> %d", s_fade_target);
+        return;
+    }
+
+    int next = s_settings_ctx.settings.brightness + s_fade_direction;
+    if (next < 0) next = 0;
+    if (next > 100) next = 100;
+    s_settings_ctx.settings.brightness = next;
+    bsp_display_brightness_set(next);
+    s_fade_steps_left--;
+}
+
+static void settings_anim_set_brightness(void *var, int32_t v)
+{
+    settings_ctx_t *ctx = (settings_ctx_t *)var;
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    ctx->settings.brightness = (int)v;
+    bsp_display_brightness_set((int)v);
 }
 
 static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta)

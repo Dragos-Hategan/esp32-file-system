@@ -8,6 +8,7 @@ idf_component_register(
         esp_bsp_generic
         touch_xpt2046
         nvs_flash
+        esp_timer
         sd_card
         fonts
 )
