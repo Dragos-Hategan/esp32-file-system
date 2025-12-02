@@ -75,6 +75,11 @@ typedef struct{
     lv_obj_t *ss_pct_lbl;               /**< Label: "%" */
     lv_obj_t *ss_dim_after_ta;          /**< Screensaver dim delay input (seconds) */
     lv_obj_t *ss_dim_pct_ta;            /**< Screensaver dim level input (%) */
+    lv_obj_t *ss_off_lbl;               /**< Screensaver off label */
+    lv_obj_t *ss_off_switch;            /**< Screensaver off on/off switch */
+    lv_obj_t *ss_off_after_lbl;         /**< Label: "Turn screen off after" */
+    lv_obj_t *ss_off_seconds_lbl;       /**< Label: "seconds." */
+    lv_obj_t *ss_off_after_ta;          /**< Screensaver off delay input (seconds) */
     settings_t settings;                /**< Information about the current session */
 }settings_ctx_t;
 
@@ -422,6 +427,16 @@ static void settings_on_dim_switch_changed(lv_event_t *e);
  * @brief Apply enabled/disabled state to dimming controls based on switch state.
  */
 static void settings_update_dim_controls_enabled(settings_ctx_t *ctx, bool enabled);
+
+/**
+ * @brief Toggle handler for screensaver off switch to enable/disable related fields.
+ */
+static void settings_on_off_switch_changed(lv_event_t *e);
+
+/**
+ * @brief Apply enabled/disabled state to off controls based on switch state.
+ */
+static void settings_update_off_controls_enabled(settings_ctx_t *ctx, bool enabled);
 
 /**
  * @brief Utility to check if an object is a descendant of another.
@@ -1221,6 +1236,9 @@ static esp_err_t settings_build_date_time_dialog(settings_ctx_t *ctx)
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_READY, ctx);
     lv_obj_align(ctx->dt_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
 
+    settings_update_dim_controls_enabled(ctx, lv_obj_has_state(ctx->ss_dim_switch, LV_STATE_CHECKED));
+    settings_update_off_controls_enabled(ctx, lv_obj_has_state(ctx->ss_off_switch, LV_STATE_CHECKED));
+
     return ESP_OK;
 }
 
@@ -1394,7 +1412,8 @@ static void settings_on_dt_background_tap(lv_event_t *e)
         settings_is_descendant(target, ctx->dt_hour_ta) ||
         settings_is_descendant(target, ctx->dt_min_ta) ||
         settings_is_descendant(target, ctx->ss_dim_after_ta) ||
-        settings_is_descendant(target, ctx->ss_dim_pct_ta)) {
+        settings_is_descendant(target, ctx->ss_dim_pct_ta) ||
+        settings_is_descendant(target, ctx->ss_off_after_ta)) {
         return;
     }
 
@@ -1449,6 +1468,20 @@ static void settings_on_dim_switch_changed(lv_event_t *e)
     settings_update_dim_controls_enabled(ctx, enabled);
 }
 
+static void settings_on_off_switch_changed(lv_event_t *e)
+{
+    settings_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx) {
+        return;
+    }
+    lv_obj_t *sw = lv_event_get_target(e);
+    bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+    if (!enabled) {
+        settings_hide_dt_keyboard(ctx);
+    }
+    settings_update_off_controls_enabled(ctx, enabled);
+}
+
 static void settings_update_dim_controls_enabled(settings_ctx_t *ctx, bool enabled)
 {
     if (!ctx) {
@@ -1493,6 +1526,46 @@ static void settings_update_dim_controls_enabled(settings_ctx_t *ctx, bool enabl
     if (!enabled && ctx->dt_keyboard) {
         lv_obj_t *attached = lv_keyboard_get_textarea(ctx->dt_keyboard);
         if (attached == ctx->ss_dim_after_ta || attached == ctx->ss_dim_pct_ta) {
+            lv_keyboard_set_textarea(ctx->dt_keyboard, NULL);
+            lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+static void settings_update_off_controls_enabled(settings_ctx_t *ctx, bool enabled)
+{
+    if (!ctx) {
+        return;
+    }
+
+    lv_obj_t *labels[] = {
+        ctx->ss_off_lbl,
+        ctx->ss_off_after_lbl,
+        ctx->ss_off_seconds_lbl,
+    };
+    for (size_t i = 0; i < sizeof(labels)/sizeof(labels[0]); i++) {
+        lv_obj_t *lbl = labels[i];
+        if (!lbl) {
+            continue;
+        }
+        if (enabled) {
+            lv_obj_clear_state(lbl, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(lbl, LV_STATE_DISABLED);
+        }
+    }
+
+    if (ctx->ss_off_after_ta) {
+        if (enabled) {
+            lv_obj_clear_state(ctx->ss_off_after_ta, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(ctx->ss_off_after_ta, LV_STATE_DISABLED);
+        }
+    }
+
+    if (!enabled && ctx->dt_keyboard) {
+        lv_obj_t *attached = lv_keyboard_get_textarea(ctx->dt_keyboard);
+        if (attached == ctx->ss_off_after_ta) {
             lv_keyboard_set_textarea(ctx->dt_keyboard, NULL);
             lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN);
         }
@@ -1854,6 +1927,11 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
         ctx->ss_pct_lbl = NULL;
         ctx->ss_dim_after_ta = NULL;
         ctx->ss_dim_pct_ta = NULL;
+        ctx->ss_off_lbl = NULL;
+        ctx->ss_off_switch = NULL;
+        ctx->ss_off_after_lbl = NULL;
+        ctx->ss_off_seconds_lbl = NULL;
+        ctx->ss_off_after_ta = NULL;
         ctx->dt_keyboard = NULL;
     }
 
@@ -1931,7 +2009,7 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     lv_obj_clear_flag(ctx->ss_dim_after_ta, LV_OBJ_FLAG_SCROLLABLE);
     lv_textarea_set_one_line(ctx->ss_dim_after_ta, true);
     lv_textarea_set_max_length(ctx->ss_dim_after_ta, 3);
-    lv_textarea_set_placeholder_text(ctx->ss_dim_after_ta, "");
+    lv_textarea_set_placeholder_text(ctx->ss_dim_after_ta, "in");
     lv_obj_add_event_cb(ctx->ss_dim_after_ta, settings_on_ss_textarea_focus, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->ss_dim_after_ta, settings_on_ss_textarea_focus, LV_EVENT_CLICKED, ctx);
 
@@ -1950,7 +2028,7 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     lv_obj_clear_flag(ctx->ss_dim_pct_ta, LV_OBJ_FLAG_SCROLLABLE);
     lv_textarea_set_one_line(ctx->ss_dim_pct_ta, true);
     lv_textarea_set_max_length(ctx->ss_dim_pct_ta, 3);
-    lv_textarea_set_placeholder_text(ctx->ss_dim_pct_ta, "");
+    lv_textarea_set_placeholder_text(ctx->ss_dim_pct_ta, "in");
     lv_obj_add_event_cb(ctx->ss_dim_pct_ta, settings_on_ss_textarea_focus, LV_EVENT_FOCUSED, ctx);
     lv_obj_add_event_cb(ctx->ss_dim_pct_ta, settings_on_ss_textarea_focus, LV_EVENT_CLICKED, ctx);
 
@@ -1971,11 +2049,45 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     lv_obj_add_flag(row_off, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *time_lbl = lv_label_create(row_off);
-    lv_label_set_text(time_lbl, "OFF");
+    lv_label_set_text(time_lbl, "Turn OFF");
     lv_obj_add_flag(time_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_off_lbl = time_lbl;
 
     lv_obj_t *off_switch = lv_switch_create(row_off);
     lv_obj_set_style_pad_all(off_switch, 4, 0);
+    lv_obj_add_state(off_switch, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(off_switch, settings_on_off_switch_changed, LV_EVENT_VALUE_CHANGED, ctx);
+    ctx->ss_off_switch = off_switch;
+
+    /* Off timing row */
+    lv_obj_t *row_off_cfg = lv_obj_create(dlg);
+    lv_obj_remove_style_all(row_off_cfg);
+    lv_obj_set_flex_flow(row_off_cfg, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(row_off_cfg, 4, 0);
+    lv_obj_set_style_pad_all(row_off_cfg, 0, 0);
+    lv_obj_set_width(row_off_cfg, LV_PCT(100));
+    lv_obj_set_height(row_off_cfg, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(row_off_cfg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_flag(row_off_cfg, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lv_obj_t *off_after_lbl = lv_label_create(row_off_cfg);
+    lv_label_set_text(off_after_lbl, "Turn off after");
+    lv_obj_add_flag(off_after_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_off_after_lbl = off_after_lbl;
+
+    ctx->ss_off_after_ta = lv_textarea_create(row_off_cfg);
+    lv_obj_set_width(ctx->ss_off_after_ta, 50);
+    lv_obj_clear_flag(ctx->ss_off_after_ta, LV_OBJ_FLAG_SCROLLABLE);
+    lv_textarea_set_one_line(ctx->ss_off_after_ta, true);
+    lv_textarea_set_max_length(ctx->ss_off_after_ta, 4);
+    lv_textarea_set_placeholder_text(ctx->ss_off_after_ta, "in");
+    lv_obj_add_event_cb(ctx->ss_off_after_ta, settings_on_ss_textarea_focus, LV_EVENT_FOCUSED, ctx);
+    lv_obj_add_event_cb(ctx->ss_off_after_ta, settings_on_ss_textarea_focus, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t *off_seconds_lbl = lv_label_create(row_off_cfg);
+    lv_label_set_text(off_seconds_lbl, "seconds.");
+    lv_obj_add_flag(off_seconds_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+    ctx->ss_off_seconds_lbl = off_seconds_lbl;
 
     /* Action row */
     lv_obj_t *row_actions = lv_obj_create(dlg);
@@ -2034,6 +2146,11 @@ static void settings_apply_screensaver(lv_event_t *e)
         ctx->ss_pct_lbl = NULL;
         ctx->ss_dim_after_ta = NULL;
         ctx->ss_dim_pct_ta = NULL;
+        ctx->ss_off_lbl = NULL;
+        ctx->ss_off_switch = NULL;
+        ctx->ss_off_after_lbl = NULL;
+        ctx->ss_off_seconds_lbl = NULL;
+        ctx->ss_off_after_ta = NULL;
         ctx->dt_keyboard = NULL;
     }  
 }
@@ -2053,6 +2170,11 @@ static void settings_close_screensaver(lv_event_t *e)
         ctx->ss_pct_lbl = NULL;
         ctx->ss_dim_after_ta = NULL;
         ctx->ss_dim_pct_ta = NULL;
+        ctx->ss_off_lbl = NULL;
+        ctx->ss_off_switch = NULL;
+        ctx->ss_off_after_lbl = NULL;
+        ctx->ss_off_seconds_lbl = NULL;
+        ctx->ss_off_after_ta = NULL;
         ctx->dt_keyboard = NULL;
     }    
 }
