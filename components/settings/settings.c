@@ -80,7 +80,7 @@ typedef struct{
     lv_obj_t *dt_min_ta;                /**< Minute input (MM) */
     lv_obj_t *dt_keyboard;              /**< On-screen keyboard for date/time dialog */
     lv_obj_t *dt_dialog;                /**< Date/time dialog container */
-    lv_obj_t *screensaver_dialog;                /**< Date/time dialog container */
+    lv_obj_t *screensaver_dialog;       /**< Date/time dialog container */
     lv_obj_t *dt_row_time;              /**< Time row container */
     lv_obj_t *ss_dim_lbl;               /**< Screensaver dimming label */
     lv_obj_t *ss_dim_switch;            /**< Screensaver dimming on/off switch */
@@ -227,9 +227,35 @@ static void settings_close_reset(lv_event_t *e);
  */
 static void settings_run_calibration(lv_event_t *e);
 
+/**
+ * @brief Open the screensaver dialog from settings.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
 static void settings_screensaver(lv_event_t *e);
+
+/**
+ * @brief Build the screensaver dialog UI and attach it to the top layer.
+ *
+ * @param ctx Active settings context.
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG if ctx is NULL.
+ */
 static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx);
+
+/**
+ * @brief Apply screensaver settings from the dialog (Dim/Off).
+ *
+ * Parses inputs, validates, persists to NVS, (re)starts timers and closes dialog.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
 static void settings_apply_screensaver(lv_event_t *e);
+
+/**
+ * @brief Close the screensaver dialog without applying changes.
+ *
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
+ */
 static void settings_close_screensaver(lv_event_t *e);
 
 /**
@@ -448,72 +474,113 @@ static void settings_hide_dt_keyboard(settings_ctx_t *ctx);
 
 /**
  * @brief Focus/click handler for screensaver numeric fields (dim delay/percent).
+ * @param e LVGL event with user data = settings_ctx_t*.
  */
 static void settings_on_ss_textarea_focus(lv_event_t *e);
 
 /**
  * @brief Toggle handler for screensaver dim switch to enable/disable related fields.
+ * @param e LVGL event (VALUE_CHANGED) with user data = settings_ctx_t*.
  */
 static void settings_on_dim_switch_changed(lv_event_t *e);
 
 /**
  * @brief Apply enabled/disabled state to dimming controls based on switch state.
+ * @param ctx Settings context.
+ * @param enabled True to enable fields, false to disable.
  */
 static void settings_update_dim_controls_enabled(settings_ctx_t *ctx, bool enabled);
 
 /**
  * @brief Hide the screensaver keyboard and detach it from any textarea.
+ * @param ctx Settings context.
  */
 static void settings_hide_ss_keyboard(settings_ctx_t *ctx);
 
 /**
  * @brief Overlay/dialog tap handler for screensaver dialog.
+ * @param e LVGL event (CLICKED) with user data = settings_ctx_t*.
  */
 static void settings_on_ss_background_tap(lv_event_t *e);
 
 /**
  * @brief Screensaver keyboard CANCEL/READY handler.
+ * @param e LVGL event (CANCEL/READY) with user data = settings_ctx_t*.
  */
 static void settings_on_ss_keyboard_event(lv_event_t *e);
 
 /**
- * @brief Start/stop hooks for screensaver dim/off timers.
+ * @brief Start dim timer; delays and target level for screensaver dim.
+ * @param seconds Delay in seconds before dim.
+ * @param level_pct Target dim level percent (0..100).
  */
 static void screensaver_dim_start(int seconds, int level_pct);
+
+/**
+ * @brief Stop the screensaver dim timer.
+ */
 static void screensaver_dim_stop(void);
+
+/**
+ * @brief Start the screensaver off timer.
+ * @param seconds Delay in seconds before turning screen off.
+ */
 static void screensaver_off_start(int seconds);
+
+/**
+ * @brief Stop the screensaver off timer.
+ */
 static void screensaver_off_stop(void);
 
 /**
  * @brief Toggle handler for screensaver off switch to enable/disable related fields.
+ * @param e LVGL event (VALUE_CHANGED) with user data = settings_ctx_t*.
  */
 static void settings_on_off_switch_changed(lv_event_t *e);
 
 /**
  * @brief Apply enabled/disabled state to off controls based on switch state.
+ * @param ctx Settings context.
+ * @param enabled True to enable, false to disable.
  */
 static void settings_update_off_controls_enabled(settings_ctx_t *ctx, bool enabled);
 
 /**
  * @brief esp_timer callback for delayed screen off.
+ * @param arg Unused.
  */
 static void settings_off_timer_cb(void *arg);
 
 /**
  * @brief esp_timer callback for delayed screen dim.
+ * @param arg Unused.
  */
 static void settings_dim_timer_cb(void *arg);
 
 /**
  * @brief Helper to animate brightness to a target percentage over a duration using esp_timer.
+ * @param target_pct Target brightness percent.
+ * @param duration_ms Fade duration in milliseconds.
  */
 static void settings_fade_brightness(int target_pct, uint32_t duration_ms);
+
+/**
+ * @brief Fade step timer callback for brightness animation.
+ * @param arg Unused.
+ */
 static void settings_fade_step_cb(void *arg);
 
 /**
  * @brief Sync brightness slider/label to the current brightness value.
+ * @param ctx Settings context.
+ * @param val Brightness percent to display.
  */
 static void settings_sync_brightness_ui(settings_ctx_t *ctx, int val);
+
+/**
+ * @brief Async worker to update brightness UI elements.
+ * @param arg Brightness value (cast from uintptr_t).
+ */
 static void settings_sync_brightness_ui_async(void *arg);
 
 /**
@@ -789,7 +856,7 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_add_event_cb(calibration_button, settings_run_calibration, LV_EVENT_CLICKED, ctx);
     lv_obj_set_style_align(calibration_button, LV_ALIGN_CENTER, 0);
     lv_obj_t *calibration_lbl = lv_label_create(calibration_button);
-    lv_label_set_text(calibration_lbl, "Calibration");
+    lv_label_set_text(calibration_lbl, "Run Calibration");
     lv_obj_center(calibration_lbl);    
     
     lv_obj_t *screen_saver_button = lv_button_create(row_actions0);
