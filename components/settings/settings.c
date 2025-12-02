@@ -1190,8 +1190,9 @@ static esp_err_t settings_build_date_time_dialog(settings_ctx_t *ctx)
     /* Keyboard anchored to bottom of overlay */
     ctx->dt_keyboard = lv_keyboard_create(overlay);
     lv_keyboard_set_mode(ctx->dt_keyboard, LV_KEYBOARD_MODE_NUMBER);
-    lv_keyboard_set_textarea(ctx->dt_keyboard, ctx->dt_month_ta);
+    lv_keyboard_set_textarea(ctx->dt_keyboard, NULL);
     lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_FLOATING);
+    lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN); /* show only after a field is tapped */
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_background_tap, LV_EVENT_CLICKED, ctx);
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_CANCEL, ctx);
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_READY, ctx);
@@ -1781,12 +1782,15 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     lv_obj_set_style_pad_all(row_dim, 0, 0);
     lv_obj_set_width(row_dim, LV_PCT(100));
     lv_obj_set_height(row_dim, LV_SIZE_CONTENT);
-    lv_obj_set_flex_align(row_dim, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(row_dim, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(row_dim, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *dim_lbl = lv_label_create(row_dim);
     lv_label_set_text(dim_lbl, "Dimming");
     lv_obj_add_flag(dim_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lv_obj_t *dim_switch = lv_switch_create(row_dim);
+    lv_obj_set_style_pad_all(dim_switch, 4, 0);
 
     /* Off row */
     lv_obj_t *row_off = lv_obj_create(dlg);
@@ -1796,12 +1800,15 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     lv_obj_set_style_pad_all(row_off, 0, 0);
     lv_obj_set_width(row_off, LV_PCT(100));
     lv_obj_set_height(row_off, LV_SIZE_CONTENT);
-    lv_obj_set_flex_align(row_off, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(row_off, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(row_off, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *time_lbl = lv_label_create(row_off);
     lv_label_set_text(time_lbl, "OFF");
     lv_obj_add_flag(time_lbl, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lv_obj_t *off_switch = lv_switch_create(row_off);
+    lv_obj_set_style_pad_all(off_switch, 4, 0);
 
     /* Action row */
     lv_obj_t *row_actions = lv_obj_create(dlg);
@@ -1834,8 +1841,9 @@ static esp_err_t settings_build_screensaver_dialog(settings_ctx_t *ctx)
     /* Keyboard anchored to bottom of overlay */
     ctx->dt_keyboard = lv_keyboard_create(overlay);
     lv_keyboard_set_mode(ctx->dt_keyboard, LV_KEYBOARD_MODE_NUMBER);
-    lv_keyboard_set_textarea(ctx->dt_keyboard, ctx->dt_month_ta);
+    lv_keyboard_set_textarea(ctx->dt_keyboard, NULL);
     lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_FLOATING);
+    lv_obj_add_flag(ctx->dt_keyboard, LV_OBJ_FLAG_HIDDEN); /* show only after a field is tapped */
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_background_tap, LV_EVENT_CLICKED, ctx);
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_CANCEL, ctx);
     lv_obj_add_event_cb(ctx->dt_keyboard, settings_on_dt_keyboard_event, LV_EVENT_READY, ctx);
