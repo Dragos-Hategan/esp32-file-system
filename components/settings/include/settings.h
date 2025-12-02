@@ -67,6 +67,7 @@ void settings_fade_to_saved_brightness(void);
 void settings_start_screensaver_timers(void);
 bool settings_is_wake_in_progress(void);
 int settings_get_active_brightness(void);
+bool settings_get_brightness_state(void);
 
 #ifdef __cplusplus
 }

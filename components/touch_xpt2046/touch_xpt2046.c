@@ -199,8 +199,10 @@ static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     data->state = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
     if (pressed && !prev_pressed) {
         touch_log_press(x, y);
-        settings_fade_to_saved_brightness();
-        settings_start_screensaver_timers();
+        if (!settings_get_brightness_state()){
+            settings_fade_to_saved_brightness();
+            settings_start_screensaver_timers();
+        }
     }
     prev_pressed = pressed;
     (void)indev;

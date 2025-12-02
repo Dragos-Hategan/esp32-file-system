@@ -64,6 +64,7 @@ typedef struct{
 
 typedef struct{
     bool active;                        /**< True while the settings screen is active */
+    bool changing_brightness;
     lv_obj_t *return_screen;            /**< Screen to return to on close */
     lv_obj_t *screen;                   /**< Root LVGL screen object */
     lv_obj_t *toolbar;                  /**< Toolbar container */
@@ -753,6 +754,11 @@ bool settings_is_wake_in_progress(void)
     return s_wake_in_progress;
 }
 
+bool settings_get_brightness_state(void)
+{
+    return s_settings_ctx.changing_brightness; 
+}
+
 static void settings_build_screen(settings_ctx_t *ctx)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -1017,6 +1023,7 @@ static void settings_on_back(lv_event_t *e)
     ctx->active = false;
     ctx->screen = NULL;
 
+    settings_start_screensaver_timers();
     settings_close(ctx);
 }
 
@@ -1027,6 +1034,7 @@ static void settings_close(settings_ctx_t *ctx)
         if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
         if (val > 100) val = 100;
         ctx->settings.brightness = val;
+        s_settings_ctx.changing_brightness = false; 
         if (ctx->settings.brightness != ctx->settings.saved_brightness) {
             persist_brightness_to_nvs();
         }
@@ -1328,6 +1336,7 @@ static void init_settings(void)
     s_settings_ctx.settings.brightness = SETTINGS_DEFAULT_BRIGHTNESS;
     s_settings_ctx.settings.saved_brightness = SETTINGS_DEFAULT_BRIGHTNESS;
     s_settings_ctx.settings.time_valid = false;
+    s_settings_ctx.changing_brightness = false; 
     s_settings_ctx.settings.screen_dim = false;
     s_settings_ctx.settings.dim_time = -1;
     s_settings_ctx.settings.dim_level = -1;
@@ -2246,6 +2255,10 @@ static void settings_on_brightness_changed(lv_event_t *e)
         return;
     }
 
+    screensaver_dim_stop();
+    screensaver_off_stop();
+    s_settings_ctx.changing_brightness = true;    
+
     int val = lv_slider_get_value(ctx->brightness_slider);
     if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
     if (val > 100) val = 100;
@@ -2428,7 +2441,11 @@ static void settings_calibration_task(void *param)
         apply_rotation_to_display(true);
     }
 
+    bsp_display_brightness_set(100);
+    screensaver_dim_stop();
+    screensaver_off_stop();
     calibration_test(true);
+    settings_start_screensaver_timers();
 
     ctx->settings.screen_rotation_step = prev_rotation;
     apply_rotation_to_display(true);
