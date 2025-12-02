@@ -100,6 +100,7 @@ typedef struct{
 static settings_ctx_t s_settings_ctx;
 static const char *TAG = "settings";
 static esp_timer_handle_t s_ss_off_timer = NULL;
+static esp_timer_handle_t s_ss_dim_timer = NULL;
 static esp_timer_handle_t s_fade_timer = NULL;
 static int s_fade_target = 0;
 static int s_fade_steps_left = 0;
@@ -496,15 +497,15 @@ static void settings_update_off_controls_enabled(settings_ctx_t *ctx, bool enabl
 static void settings_off_timer_cb(void *arg);
 
 /**
+ * @brief esp_timer callback for delayed screen dim.
+ */
+static void settings_dim_timer_cb(void *arg);
+
+/**
  * @brief Helper to animate brightness to a target percentage over a duration using esp_timer.
  */
 static void settings_fade_brightness(int target_pct, uint32_t duration_ms);
 static void settings_fade_step_cb(void *arg);
-
-/**
- * @brief LVGL anim executor for brightness changes.
- */
-static void settings_anim_set_brightness(void *var, int32_t v);
 
 /**
  * @brief Utility to check if an object is a descendant of another.
@@ -1795,14 +1796,35 @@ static void settings_update_off_controls_enabled(settings_ctx_t *ctx, bool enabl
 static void screensaver_dim_start(int seconds, int level_pct)
 {
     ESP_LOGI(TAG, "Start dim timer: %ds -> %d%%", seconds, level_pct);
-    /* TODO: wire actual dim timer start here. */
-    /* TODO: ensure dim timer is skipped when off_time <= dim_time (handled by dim_allowed check). */
+    if (s_ss_dim_timer == NULL) {
+        const esp_timer_create_args_t args = {
+            .callback = settings_dim_timer_cb,
+            .arg = NULL,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "ss_dim",
+        };
+        esp_err_t err = esp_timer_create(&args, &s_ss_dim_timer);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create dim timer: %s", esp_err_to_name(err));
+            return;
+        }
+    } else {
+        esp_timer_stop(s_ss_dim_timer);
+    }
+
+    int64_t us = (seconds < 0 ? 0 : seconds) * 1000000LL;
+    esp_err_t err = esp_timer_start_once(s_ss_dim_timer, us);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start dim timer: %s", esp_err_to_name(err));
+    }
 }
 
 static void screensaver_dim_stop(void)
 {
     ESP_LOGI(TAG, "Stop dim timer");
-    /* TODO: wire actual dim timer stop here. */
+    if (s_ss_dim_timer) {
+        esp_timer_stop(s_ss_dim_timer);
+    }
 }
 
 static void screensaver_off_start(int seconds)
@@ -1845,6 +1867,13 @@ static void settings_off_timer_cb(void *arg)
     (void)arg;
     ESP_LOGI(TAG, "Off timer fired: fading screen off");
     settings_fade_brightness(0, SETTINGS_OFF_FADE_MS);
+}
+
+static void settings_dim_timer_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "Dim timer fired: fading to dim level");
+    settings_fade_brightness(s_settings_ctx.settings.dim_level, SETTINGS_DIM_FADE_MS);
 }
 
 static void settings_fade_brightness(int target_pct, uint32_t duration_ms)
@@ -1915,15 +1944,6 @@ static void settings_fade_step_cb(void *arg)
     s_settings_ctx.settings.brightness = next;
     bsp_display_brightness_set(next);
     s_fade_steps_left--;
-}
-
-static void settings_anim_set_brightness(void *var, int32_t v)
-{
-    settings_ctx_t *ctx = (settings_ctx_t *)var;
-    if (v < 0) v = 0;
-    if (v > 100) v = 100;
-    ctx->settings.brightness = (int)v;
-    bsp_display_brightness_set((int)v);
 }
 
 static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta)
