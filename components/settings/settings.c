@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -506,6 +507,12 @@ static void settings_dim_timer_cb(void *arg);
  */
 static void settings_fade_brightness(int target_pct, uint32_t duration_ms);
 static void settings_fade_step_cb(void *arg);
+
+/**
+ * @brief Sync brightness slider/label to the current brightness value.
+ */
+static void settings_sync_brightness_ui(settings_ctx_t *ctx, int val);
+static void settings_sync_brightness_ui_async(void *arg);
 
 /**
  * @brief Utility to check if an object is a descendant of another.
@@ -1886,6 +1893,7 @@ static void settings_fade_brightness(int target_pct, uint32_t duration_ms)
     if (duration_ms == 0 || start == target_pct) {
         ctx->settings.brightness = target_pct;
         bsp_display_brightness_set(target_pct);
+        settings_sync_brightness_ui(ctx, target_pct);
         return;
     }
 
@@ -1911,6 +1919,7 @@ static void settings_fade_brightness(int target_pct, uint32_t duration_ms)
     if (s_fade_steps_left == 0) {
         ctx->settings.brightness = target_pct;
         bsp_display_brightness_set(target_pct);
+        settings_sync_brightness_ui(ctx, target_pct);
         return;
     }
 
@@ -1934,6 +1943,7 @@ static void settings_fade_step_cb(void *arg)
         }
         s_settings_ctx.settings.brightness = s_fade_target;
         bsp_display_brightness_set(s_fade_target);
+        settings_sync_brightness_ui(&s_settings_ctx, s_fade_target);
         ESP_LOGI(TAG, "Fade complete -> %d", s_fade_target);
         return;
     }
@@ -1943,7 +1953,31 @@ static void settings_fade_step_cb(void *arg)
     if (next > 100) next = 100;
     s_settings_ctx.settings.brightness = next;
     bsp_display_brightness_set(next);
+    settings_sync_brightness_ui(&s_settings_ctx, next);
     s_fade_steps_left--;
+}
+
+static void settings_sync_brightness_ui(settings_ctx_t *ctx, int val)
+{
+    (void)ctx;
+    lv_async_call(settings_sync_brightness_ui_async, (void *)(uintptr_t)val);
+}
+
+static void settings_sync_brightness_ui_async(void *arg)
+{
+    int val = (int)(uintptr_t)arg;
+    if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
+    if (val > 100) val = 100;
+
+    settings_ctx_t *ctx = &s_settings_ctx;
+    if (ctx->brightness_slider) {
+        lv_slider_set_value(ctx->brightness_slider, val, LV_ANIM_OFF);
+    }
+    if (ctx->brightness_label) {
+        char txt[32];
+        lv_snprintf(txt, sizeof(txt), "Brightness: %d%%", val);
+        lv_label_set_text(ctx->brightness_label, txt);
+    }
 }
 
 static void settings_scroll_field_into_view(settings_ctx_t *ctx, lv_obj_t *ta)
