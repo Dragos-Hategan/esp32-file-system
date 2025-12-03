@@ -1420,7 +1420,7 @@ static esp_err_t settings_build_date_time_dialog(settings_ctx_t *ctx)
     lv_obj_set_style_pad_all(row_date, 0, 0);
     lv_obj_set_width(row_date, LV_PCT(100));
     lv_obj_set_height(row_date, LV_SIZE_CONTENT);
-    lv_obj_set_flex_align(row_date, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(row_date, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(row_date, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t *date_lbl = lv_label_create(row_date);
@@ -1470,7 +1470,7 @@ static esp_err_t settings_build_date_time_dialog(settings_ctx_t *ctx)
     lv_obj_set_style_pad_all(row_time, 0, 0);
     lv_obj_set_width(row_time, LV_PCT(100));
     lv_obj_set_height(row_time, LV_SIZE_CONTENT);
-    lv_obj_set_flex_align(row_time, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(row_time, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_add_flag(row_time, LV_OBJ_FLAG_EVENT_BUBBLE);
     ctx->dt_row_time = row_time;
 

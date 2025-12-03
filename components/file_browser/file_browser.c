@@ -2128,20 +2128,23 @@ static void file_browser_show_sort_dialog(file_browser_ctx_t *ctx)
     lv_obj_t *overlay = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(overlay);
     lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_30, 0);
     lv_obj_add_flag(overlay, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_CLICK_FOCUSABLE);
     ctx->sort_panel = overlay;
 
     lv_obj_t *dlg = lv_obj_create(overlay);
+    lv_obj_set_style_radius(dlg, 12, 0);
     lv_obj_set_style_pad_all(dlg, 12, 0);
-    lv_obj_set_style_radius(dlg, 8, 0);
-    lv_obj_set_style_width(dlg, LV_PCT(65), 0);
+    lv_obj_set_style_pad_gap(dlg, 6, 0);
+    lv_obj_set_size(dlg, lv_pct(82), lv_pct(70));
     lv_obj_set_flex_flow(dlg, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_gap(dlg, 8, 0);
+    lv_obj_set_flex_align(dlg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_center(dlg);
 
     lv_obj_t *title = lv_label_create(dlg);
     lv_label_set_text(title, "Sort");
+    lv_obj_set_width(title, LV_PCT(100));
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
 
     lv_obj_t *row_crit = lv_obj_create(dlg);
@@ -2149,8 +2152,11 @@ static void file_browser_show_sort_dialog(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(row_crit, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_gap(row_crit, 6, 0);
     lv_obj_set_width(row_crit, LV_PCT(100));
+    lv_obj_set_height(row_crit, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(row_crit, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *crit_lbl = lv_label_create(row_crit);
     lv_label_set_text(crit_lbl, "Criteria:");
+
     ctx->sort_criteria_dd = lv_dropdown_create(row_crit);
     lv_dropdown_set_options_static(ctx->sort_criteria_dd, "Name\nDate\nSize");
     lv_obj_set_width(ctx->sort_criteria_dd, 120);
@@ -2161,8 +2167,11 @@ static void file_browser_show_sort_dialog(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(row_dir, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_gap(row_dir, 6, 0);
     lv_obj_set_width(row_dir, LV_PCT(100));
+    lv_obj_set_height(row_dir, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(row_dir, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *dir_lbl = lv_label_create(row_dir);
     lv_label_set_text(dir_lbl, "Direction:");
+    
     ctx->sort_direction_dd = lv_dropdown_create(row_dir);
     lv_dropdown_set_options_static(ctx->sort_direction_dd, "Ascending\nDescending");
     lv_obj_set_width(ctx->sort_direction_dd, 120);
@@ -2173,6 +2182,8 @@ static void file_browser_show_sort_dialog(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_gap(actions, 8, 0);
     lv_obj_set_width(actions, LV_PCT(100));
+    lv_obj_set_height(actions, LV_SIZE_CONTENT);
+    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *apply_btn = lv_button_create(actions);
     lv_obj_set_flex_grow(apply_btn, 1);
