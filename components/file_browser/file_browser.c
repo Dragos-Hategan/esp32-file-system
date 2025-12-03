@@ -1294,9 +1294,21 @@ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_inde
     bool prev_suppress = ctx->list_suppress_scroll;
     ctx->list_suppress_scroll = true;
     file_browser_populate_list(ctx);
+    lv_obj_update_layout(ctx->list);
 
     if (anchor_index != SIZE_MAX) {
-        file_browser_scroll_to_entry(ctx, anchor_index, center_anchor);
+        size_t window_count = 0;
+        fs_nav_entries(&ctx->nav, &window_count);
+        if (window_count > 0) {
+            if (anchor_index < ctx->list_window_start) {
+                anchor_index = ctx->list_window_start;
+            }
+            size_t window_end = ctx->list_window_start + window_count;
+            if (anchor_index >= window_end) {
+                anchor_index = window_end - 1;
+            }
+            file_browser_scroll_to_entry(ctx, anchor_index, center_anchor);
+        }
     } else {
         if (scroll_to_top) {
             lv_obj_scroll_to_y(ctx->list, 0, LV_ANIM_OFF);
@@ -2019,7 +2031,10 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
     if (window_size == 0) {
         window_size = FILE_BROWSER_LIST_WINDOW_SIZE;
     }
-    size_t step = FILE_BROWSER_LIST_WINDOW_STEP;
+    size_t step = FILE_BROWSER_LIST_WINDOW_STEP ? FILE_BROWSER_LIST_WINDOW_STEP : (window_size / 2);
+    if (step == 0) {
+        step = 1;
+    }
 
     if (at_bottom && !ctx->list_at_bottom_edge) {
         ctx->list_at_bottom_edge = true;
@@ -2029,15 +2044,10 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
         if (total > window_size && available_end < total) {
             size_t max_start = (total > window_size) ? (total - window_size) : 0;
             size_t new_start = ctx->list_window_start + step;
-            if (new_start > max_start) {
-                new_start = max_start;
-            }
-            size_t overlap = (window_size > step) ? (window_size - step) : 0;
-            size_t boundary = new_start + overlap;
-            if (boundary >= total) {
-                boundary = total ? (total - 1) : 0;
-            }
-            file_browser_apply_window(ctx, new_start, boundary, true, true);
+            if (new_start > max_start) new_start = max_start;
+            size_t anchor_global = new_start + (step ? (step - 1) : 0); /* last overlapping item */
+            if (anchor_global >= total) anchor_global = total ? (total - 1) : 0;
+            file_browser_apply_window(ctx, new_start, anchor_global, true, false);
         }
     } else if (!at_bottom) {
         ctx->list_at_bottom_edge = false;
@@ -2046,13 +2056,10 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
     if (at_top && !ctx->list_at_top_edge) {
         ctx->list_at_top_edge = true;
         if (total > window_size && ctx->list_window_start > 0) {
-            size_t prev_start = ctx->list_window_start;
             size_t new_start = (ctx->list_window_start > step) ? (ctx->list_window_start - step) : 0;
-            size_t boundary = prev_start;
-            if (boundary >= total) {
-                boundary = total ? (total - 1) : 0;
-            }
-            file_browser_apply_window(ctx, new_start, boundary, true, false);
+            size_t anchor_global = new_start + step; /* first overlapping item from previous window */
+            if (anchor_global >= total) anchor_global = total ? (total - 1) : 0;
+            file_browser_apply_window(ctx, new_start, anchor_global, true, false);
         }
     } else if (!at_top) {
         ctx->list_at_top_edge = false;
