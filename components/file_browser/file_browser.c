@@ -107,6 +107,7 @@ typedef struct {
     bool list_at_top_edge;
     bool list_at_bottom_edge;
     bool list_suppress_scroll;
+    bool list_has_paged;
 } file_browser_ctx_t;
 
 static file_browser_ctx_t s_browser;
@@ -247,16 +248,7 @@ static void file_browser_path_scroll_timer_cb(lv_timer_t *timer);
  * @param center_anchor True to center the anchor entry, false to align it near top.
  * @param scroll_to_top Fallback scroll when no anchor: true = top, false = bottom.
  */
- static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top);
-
-/**
- * @brief Scroll list so a given global entry index is visible.
- *
- * @param ctx Browser context.
- * @param global_index Entry index in navigator array.
- * @param center True to center the entry vertically if possible.
- */
- static void file_browser_scroll_to_entry(file_browser_ctx_t *ctx, size_t global_index, bool center);
+static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top);
 
 /**
  * @brief Synchronize all UI elements with the current navigation state.
@@ -1273,6 +1265,7 @@ static void file_browser_reset_window(file_browser_ctx_t *ctx)
     ctx->list_at_top_edge = false;
     ctx->list_at_bottom_edge = false;
     ctx->list_suppress_scroll = false;
+    ctx->list_has_paged = false;
 }
 
 static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top)
@@ -1296,75 +1289,12 @@ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_inde
     file_browser_populate_list(ctx);
     lv_obj_update_layout(ctx->list);
 
-    if (anchor_index != SIZE_MAX) {
-        size_t window_count = 0;
-        fs_nav_entries(&ctx->nav, &window_count);
-        if (window_count > 0) {
-            if (anchor_index < ctx->list_window_start) {
-                anchor_index = ctx->list_window_start;
-            }
-            size_t window_end = ctx->list_window_start + window_count;
-            if (anchor_index >= window_end) {
-                anchor_index = window_end - 1;
-            }
-            file_browser_scroll_to_entry(ctx, anchor_index, center_anchor);
-            lv_obj_scroll_to_y(ctx->list, lv_obj_get_scroll_bottom(ctx->list) / 2, LV_ANIM_OFF);
-        }
-    } else {
-        if (scroll_to_top) {
-            lv_obj_scroll_to_y(ctx->list, 0, LV_ANIM_OFF);
-        } else {
-            lv_point_t end = {0};
-            lv_obj_get_scroll_end(ctx->list, &end);
-            lv_obj_scroll_to(ctx->list, end.x, end.y, LV_ANIM_OFF);
-        }
+    if (ctx->list_has_paged) {
+        /* Center only after the first paging has occurred. */
+        lv_obj_scroll_to_y(ctx->list, lv_obj_get_scroll_bottom(ctx->list) / 2, LV_ANIM_OFF);
     }
 
     ctx->list_suppress_scroll = prev_suppress;
-}
-
-static void file_browser_scroll_to_entry(file_browser_ctx_t *ctx, size_t global_index, bool center)
-{
-    if (!ctx || !ctx->list) {
-        return;
-    }
-
-    size_t count = 0;
-    fs_nav_entries(&ctx->nav, &count);
-    if (global_index >= count) {
-        return;
-    }
-
-    size_t window_size = ctx->list_window_size ? ctx->list_window_size : FILE_BROWSER_LIST_WINDOW_SIZE;
-    size_t start = ctx->list_window_start;
-    if (global_index < start || global_index >= start + window_size) {
-        return;
-    }
-
-    size_t relative = global_index - start;
-    lv_obj_t *child = lv_obj_get_child(ctx->list, relative);
-    if (!child) {
-        return;
-    }
-
-    lv_coord_t target_y;
-    if (center) {
-        lv_coord_t list_h = lv_obj_get_height(ctx->list);
-        lv_coord_t child_y = lv_obj_get_y(child);
-        lv_coord_t child_h = lv_obj_get_height(child);
-        target_y = child_y + child_h / 2 - list_h / 2;
-        if (target_y < 0) {
-            target_y = 0;
-        }
-        lv_point_t end = {0};
-        lv_obj_get_scroll_end(ctx->list, &end);
-        if (target_y > end.y) {
-            target_y = end.y;
-        }
-    } else {
-        target_y = lv_obj_get_y(child);
-    }
-    lv_obj_scroll_to(ctx->list, 0, target_y, LV_ANIM_OFF);
 }
 
 static void file_browser_schedule_wait_for_reconnection(void)
@@ -2048,6 +1978,7 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
             if (new_start > max_start) new_start = max_start;
             size_t anchor_global = new_start + (step ? (step - 1) : 0); /* last overlapping item */
             if (anchor_global >= total) anchor_global = total ? (total - 1) : 0;
+            ctx->list_has_paged = true;
             file_browser_apply_window(ctx, new_start, anchor_global, true, false);
         }
     } else if (!at_bottom) {
@@ -2060,6 +1991,7 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
             size_t new_start = (ctx->list_window_start > step) ? (ctx->list_window_start - step) : 0;
             size_t anchor_global = new_start + step; /* first overlapping item from previous window */
             if (anchor_global >= total) anchor_global = total ? (total - 1) : 0;
+            ctx->list_has_paged = true;
             file_browser_apply_window(ctx, new_start, anchor_global, true, false);
         }
     } else if (!at_top) {
