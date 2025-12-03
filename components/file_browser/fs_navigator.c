@@ -46,7 +46,7 @@ static bool s_cmp_ascending = true;
 static bool fs_nav_is_valid_relative(const char *relative);
 
 /**
- * @brief Free entry names and reset entry_count (keeping capacity buffer).
+ * @brief Free capacity buffer, entry names and reset entry_count.
  *
  * @param nav Navigator.
  */
@@ -192,12 +192,6 @@ void fs_nav_deinit(fs_nav_t *nav)
         return;
     }
     fs_nav_clear_entries(nav);
-    if (nav->entries) {
-        heap_caps_free(nav->entries);
-    }
-    nav->entries = NULL;
-    nav->entry_count = 0;
-    nav->capacity = 0;
 }
 
 esp_err_t fs_nav_refresh(fs_nav_t *nav)
@@ -683,6 +677,9 @@ static void fs_nav_clear_entries(fs_nav_t *nav)
             nav->entries[i].name = NULL;
         }
     }
+    heap_caps_free(nav->entries);
+    nav->entries = NULL;
+    nav->capacity = 0;
     nav->entry_count = 0;
 }
 

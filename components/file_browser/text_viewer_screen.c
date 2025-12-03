@@ -1807,6 +1807,17 @@ static void text_viewer_close(text_viewer_ctx_t *ctx, bool changed)
     ctx->content_changed = false;
     lv_keyboard_set_textarea(ctx->keyboard, NULL);
     lv_obj_add_flag(ctx->keyboard, LV_OBJ_FLAG_HIDDEN);
+    /* Drop heavy UI tree (text area buffer) so large files release heap after close. */
+    if (ctx->screen) {
+        lv_obj_del(ctx->screen);
+        ctx->screen = NULL;
+        ctx->toolbar = NULL;
+        ctx->path_label = NULL;
+        ctx->status_label = NULL;
+        ctx->save_btn = NULL;
+        ctx->text_area = NULL;
+        ctx->keyboard = NULL;
+    }
     free(ctx->original_text);
     ctx->original_text = NULL;
     if (ctx->return_screen)
