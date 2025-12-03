@@ -30,6 +30,7 @@
 #define FILE_BROWSER_MAX_SORTABLE_ENTRIES 256  /* 0 = unlimited */
 #define FILE_BROWSER_LIST_WINDOW_SIZE    20
 #define FILE_BROWSER_LIST_WINDOW_STEP    10
+#define FILE_BROWSER_PATH_SCROLL_DELAY_MS 1500
 
 #define FILE_BROWSER_WAIT_STACK_SIZE_B   (6 * 1024)
 #define FILE_BROWSER_WAIT_PRIO    (4)
@@ -92,6 +93,7 @@ typedef struct {
     lv_obj_t *rename_dialog;
     lv_obj_t *rename_textarea;
     lv_obj_t *rename_keyboard;
+    lv_timer_t *path_scroll_timer;
     file_browser_action_entry_t action_entry;
     file_browser_clipboard_t clipboard;
     char paste_conflict_path[FS_NAV_MAX_PATH];
@@ -202,6 +204,32 @@ static void file_browser_clock_timer_cb(void *arg);
  * @param arg Unused.
  */
 static void file_browser_clock_update_async(void *arg);
+
+/**
+ * @brief Restarts the delayed scrolling animation for the path label.
+ *
+ * This function cancels any existing scroll-start timer, forces the path label into
+ * clipped mode, and creates a new one-shot timer that will re-enable circular
+ * scrolling after FILE_BROWSER_PATH_SCROLL_DELAY_MS milliseconds.
+ *
+ * It is typically used whenever the displayed path changes, ensuring the scroll
+ * animation restarts cleanly and does not begin immediately.
+ *
+ * @param ctx Pointer to the file browser UI context. Must contain a valid path_label.
+ */
+static void file_browser_restart_path_scroll(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Timer callback used to enable scrolling for the file browser path label.
+ *
+ * This function is invoked after a short delay to switch the path label's long mode
+ * from clipped (LV_LABEL_LONG_CLIP) to circular scrolling (LV_LABEL_LONG_SCROLL_CIRCULAR).
+ * The delay prevents immediate scrolling and makes the UI feel smoother when paths change.
+ *
+ * @param timer Pointer to the LVGL timer that triggered the callback.
+ *              Its user_data must contain a valid file_browser_ctx_t*.
+ */
+static void file_browser_path_scroll_timer_cb(lv_timer_t *timer);
 
 /**
  * @brief Reset the virtual list window to the first page.
@@ -1135,7 +1163,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(settings_lbl, LV_TEXT_ALIGN_CENTER, 0);
 
     ctx->tools_dd = lv_dropdown_create(main_header);
-    lv_dropdown_set_options_static(ctx->tools_dd, "New Folder\nNew TXT\nSort\n");
+    lv_dropdown_set_options_static(ctx->tools_dd, "New Folder\nNew TXT\nSort");
     lv_dropdown_set_selected(ctx->tools_dd, 0);
     lv_dropdown_set_text(ctx->tools_dd, "Tools");
     lv_obj_set_width(ctx->tools_dd, 70);
@@ -1182,7 +1210,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(path_prefix, LV_TEXT_ALIGN_LEFT, 0);
 
     ctx->path_label = lv_label_create(path_row);
-    lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_flex_grow(ctx->path_label, 1);
     lv_obj_set_width(ctx->path_label, LV_PCT(100));
     lv_obj_set_style_text_align(ctx->path_label, LV_TEXT_ALIGN_LEFT, 0);
@@ -1194,8 +1222,6 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(ctx->second_header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(ctx->second_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(ctx->second_header, 3, 0);
-    /* MIGHT BE CHANGED */
-    /* Header row: parent on the left, paste controls pinned to the right. */
 
     ctx->parent_btn = lv_button_create(ctx->second_header);
     lv_obj_set_size(ctx->parent_btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -1446,6 +1472,37 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx)
     }
 }
 
+static void file_browser_path_scroll_timer_cb(lv_timer_t *timer)
+{
+    file_browser_ctx_t *ctx = (file_browser_ctx_t *)lv_timer_get_user_data(timer);
+    if (ctx) {
+        ctx->path_scroll_timer = NULL;
+        if (ctx->path_label && lv_obj_is_valid(ctx->path_label)) {
+            lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        }
+    }
+    lv_timer_del(timer);
+}
+
+static void file_browser_restart_path_scroll(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->path_label) {
+        return;
+    }
+
+    if (ctx->path_scroll_timer) {
+        lv_timer_del(ctx->path_scroll_timer);
+        ctx->path_scroll_timer = NULL;
+    }
+
+    /* Start clipped, then enable scroll after a short delay. */
+    lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_CLIP);
+    ctx->path_scroll_timer = lv_timer_create(file_browser_path_scroll_timer_cb, FILE_BROWSER_PATH_SCROLL_DELAY_MS, ctx);
+    if (ctx->path_scroll_timer) {
+        lv_timer_set_repeat_count(ctx->path_scroll_timer, 1);
+    }
+}
+
 static void file_browser_update_path_label(file_browser_ctx_t *ctx)
 {
     if (!ctx || !ctx->path_label) {
@@ -1470,6 +1527,7 @@ static void file_browser_update_path_label(file_browser_ctx_t *ctx)
     }
 
     lv_label_set_text(ctx->path_label, display);
+    file_browser_restart_path_scroll(ctx);
 }
 
 static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)

@@ -951,7 +951,7 @@ static void settings_on_about(lv_event_t *e)
 
     lv_obj_t *dlg = lv_obj_create(overlay);
     lv_obj_set_style_radius(dlg, 12, 0);
-    lv_obj_set_style_pad_all(dlg, 16, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
     lv_obj_set_style_bg_color(dlg, lv_color_hex(0x202126), 0);
     lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(dlg, 2, 0);
@@ -959,7 +959,7 @@ static void settings_on_about(lv_event_t *e)
     lv_obj_set_width(dlg, LV_PCT(80));
     lv_obj_set_height(dlg, LV_PCT(90));
     lv_obj_set_flex_flow(dlg, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(dlg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_align(dlg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_center(dlg);
 
     lv_obj_t *list = lv_obj_create(dlg);
@@ -993,9 +993,10 @@ static void settings_on_about(lv_event_t *e)
     }
 
     lv_obj_t *ok_btn = lv_button_create(dlg);
-    lv_obj_set_width(ok_btn, LV_PCT(100));
+    lv_obj_set_width(ok_btn, LV_PCT(55));
     lv_obj_set_style_radius(ok_btn, 8, 0);
     lv_obj_set_style_pad_all(ok_btn, 8, 0);
+    lv_obj_set_style_align(ok_btn, LV_ALIGN_CENTER, 0);
     lv_obj_t *ok_lbl = lv_label_create(ok_btn);
     lv_label_set_text(ok_lbl, "OK");
     lv_obj_center(ok_lbl);
@@ -2267,11 +2268,11 @@ static void settings_on_brightness_changed(lv_event_t *e)
     if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
     if (val > 100) val = 100;
     ctx->settings.brightness = val;
-    s_settings_ctx.changing_brightness = true;
-
+    
     /* Stop any screensaver dim/off fade using the latest brightness value. */
     screensaver_dim_stop();
     screensaver_off_stop();
+    s_settings_ctx.changing_brightness = true;
 
     char txt[32];
     lv_snprintf(txt, sizeof(txt), "Brightness: %d%%", val);

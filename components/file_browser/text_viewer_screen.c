@@ -12,6 +12,8 @@
 #include "esp_log.h"
 #include "sd_card.h"
 
+#define TEXT_VIEWER_PATH_SCROLL_DELAY_MS 1500
+
 /**
  * @brief Actions in the chunk-change prompt.
  */
@@ -36,42 +38,43 @@ typedef enum
  */
 typedef struct
 {
-    bool active;                        /**< True while the viewer screen is active */
-    bool dirty;                         /**< True if current text differs from original */
-    bool editable;                      /**< True if edit mode is enabled */
-    bool new_file;                      /**< True if creating a new file */
-    bool at_top_edge;                   /**< Tracks if the scroll is currently at the top edge */
-    bool at_bottom_edge;                /**< Tracks if the scroll is currently at the bottom edge */
-    bool suppress_events;               /**< Temporarily disable change detection */
-    size_t lasf_file_offset_kb;         /**< Offset (in KB) used for the last read chunk */
-    size_t current_file_offset_kb;      /**< Offset (in KB) used for the current/next chunk */
-    size_t max_file_offset_kb;          /**< Maximum readable offset (in KB) for the loaded file */
-    lv_obj_t *screen;                   /**< Root LVGL screen object */
-    lv_obj_t *toolbar;                  /**< Toolbar container */
-    lv_obj_t *path_label;               /**< Label showing the file path */
-    lv_obj_t *status_label;             /**< Label showing transient status messages */
-    lv_obj_t *save_btn;                 /**< Save button (hidden/disabled in view mode) */
-    lv_obj_t *text_area;                /**< Text area for viewing/editing content */
-    lv_obj_t *keyboard;                 /**< On-screen keyboard */
-    lv_obj_t *return_screen;            /**< Screen to return to on close */
-    lv_obj_t *confirm_mbox;             /**< Confirmation message box (save/discard) */
-    lv_obj_t *chunk_mbox;               /**< Chunk-change confirmation message box */
-    lv_obj_t *name_dialog;              /**< Filename prompt dialog */
-    lv_obj_t *name_textarea;            /**< Text area used inside filename dialog */
-    lv_timer_t *sd_retry_timer;         /**< Timer to poll SD reconnection */
-    text_viewer_close_cb_t close_cb;    /**< Optional close callback */
-    void *close_ctx;                    /**< User context for close callback */
-    char path[FS_TEXT_MAX_PATH];        /**< Current file path */
-    char directory[FS_TEXT_MAX_PATH];   /**< Directory used for new files */
-    char pending_name[FS_NAV_MAX_NAME]; /**< Suggested filename for new files */
-    char *original_text;                /**< Snapshot of text at load/save time */
-    size_t pending_first_offset_kb;     /**< Pending first chunk offset when prompting */
-    size_t pending_second_offset_kb;    /**< Pending second chunk offset when prompting */
-    bool pending_scroll_up;             /**< True if pending load comes from top edge */
-    bool pending_chunk;                 /**< True if a chunk load is pending confirmation */
-    bool waiting_sd;                    /**< True while waiting SD reconnection */
-    text_viewer_sd_action_t sd_retry_action; /**< Pending action after SD reconnect */
-    bool content_changed;               /**< True if file was saved during session */
+    bool active;                                /**< True while the viewer screen is active */
+    bool dirty;                                 /**< True if current text differs from original */
+    bool editable;                              /**< True if edit mode is enabled */
+    bool new_file;                              /**< True if creating a new file */
+    bool at_top_edge;                           /**< Tracks if the scroll is currently at the top edge */
+    bool at_bottom_edge;                        /**< Tracks if the scroll is currently at the bottom edge */
+    bool suppress_events;                       /**< Temporarily disable change detection */
+    size_t lasf_file_offset_kb;                 /**< Offset (in KB) used for the last read chunk */
+    size_t current_file_offset_kb;              /**< Offset (in KB) used for the current/next chunk */
+    size_t max_file_offset_kb;                  /**< Maximum readable offset (in KB) for the loaded file */
+    lv_obj_t *screen;                           /**< Root LVGL screen object */
+    lv_obj_t *toolbar;                          /**< Toolbar container */
+    lv_obj_t *path_label;                       /**< Label showing the file path */
+    lv_obj_t *status_label;                     /**< Label showing transient status messages */
+    lv_obj_t *save_btn;                         /**< Save button (hidden/disabled in view mode) */
+    lv_obj_t *text_area;                        /**< Text area for viewing/editing content */
+    lv_obj_t *keyboard;                         /**< On-screen keyboard */
+    lv_obj_t *return_screen;                    /**< Screen to return to on close */
+    lv_obj_t *confirm_mbox;                     /**< Confirmation message box (save/discard) */
+    lv_obj_t *chunk_mbox;                       /**< Chunk-change confirmation message box */
+    lv_obj_t *name_dialog;                      /**< Filename prompt dialog */
+    lv_obj_t *name_textarea;                    /**< Text area used inside filename dialog */
+    lv_timer_t *sd_retry_timer;                 /**< Timer to poll SD reconnection */
+    lv_timer_t *path_scroll_timer;              /**< Timer to delay the scrolling of paths */
+    text_viewer_close_cb_t close_cb;            /**< Optional close callback */
+    void *close_ctx;                            /**< User context for close callback */
+    char path[FS_TEXT_MAX_PATH];                /**< Current file path */
+    char directory[FS_TEXT_MAX_PATH];           /**< Directory used for new files */
+    char pending_name[FS_NAV_MAX_NAME];         /**< Suggested filename for new files */
+    char *original_text;                        /**< Snapshot of text at load/save time */
+    size_t pending_first_offset_kb;             /**< Pending first chunk offset when prompting */
+    size_t pending_second_offset_kb;            /**< Pending second chunk offset when prompting */
+    bool pending_scroll_up;                     /**< True if pending load comes from top edge */
+    bool pending_chunk;                         /**< True if a chunk load is pending confirmation */
+    bool waiting_sd;                            /**< True while waiting SD reconnection */
+    text_viewer_sd_action_t sd_retry_action;    /**< Pending action after SD reconnect */
+    bool content_changed;                       /**< True if file was saved during session */
 } text_viewer_ctx_t;
 
 /**
@@ -126,6 +129,32 @@ static void text_viewer_set_status(text_viewer_ctx_t *ctx, const char *msg);
  * @param path Filesystem path (may be NULL/empty).
  */
 static void text_viewer_set_path_label(text_viewer_ctx_t *ctx, const char *path);
+
+/**
+ * @brief Restarts the delayed scrolling animation for the path label.
+ *
+ * This function cancels any existing scroll-start timer, forces the path label into
+ * clipped mode, and creates a new one-shot timer that will re-enable circular
+ * scrolling after TEXT_VIEWER_PATH_SCROLL_DELAY_MS milliseconds.
+ *
+ * It is typically used whenever the displayed path changes, ensuring the scroll
+ * animation restarts cleanly and does not begin immediately.
+ *
+ * @param ctx Pointer to the text viewer UI context. Must contain a valid path_label.
+ */
+static void text_viewer_restart_path_scroll(text_viewer_ctx_t *ctx);
+
+/**
+ * @brief Timer callback used to enable scrolling for the text viewer path label.
+ *
+ * This function is invoked after a short delay to switch the path label's long mode
+ * from clipped (LV_LABEL_LONG_CLIP) to circular scrolling (LV_LABEL_LONG_SCROLL_CIRCULAR).
+ * The delay prevents immediate scrolling and makes the UI feel smoother when paths change.
+ *
+ * @param timer Pointer to the LVGL timer that triggered the callback.
+ *              Its user_data must contain a valid text_viewer_ctx_t*.
+ */
+static void text_viewer_path_scroll_timer_cb(lv_timer_t *timer);
 
 /**
  * @brief Replace the stored original text snapshot.
@@ -760,6 +789,38 @@ static void text_viewer_set_path_label(text_viewer_ctx_t *ctx, const char *path)
     }
 
     lv_label_set_text(ctx->path_label, display);
+    text_viewer_restart_path_scroll(ctx);
+}
+
+static void text_viewer_path_scroll_timer_cb(lv_timer_t *timer)
+{
+    text_viewer_ctx_t *ctx = (text_viewer_ctx_t *)lv_timer_get_user_data(timer);
+    if (ctx) {
+        ctx->path_scroll_timer = NULL;
+        if (ctx->path_label && lv_obj_is_valid(ctx->path_label)) {
+            lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        }
+    }
+    lv_timer_del(timer);
+}
+
+static void text_viewer_restart_path_scroll(text_viewer_ctx_t *ctx)
+{
+    if (!ctx || !ctx->path_label) {
+        return;
+    }
+
+    if (ctx->path_scroll_timer) {
+        lv_timer_del(ctx->path_scroll_timer);
+        ctx->path_scroll_timer = NULL;
+    }
+
+    /* Start clipped, then enable scroll after a short delay. */
+    lv_label_set_long_mode(ctx->path_label, LV_LABEL_LONG_CLIP);
+    ctx->path_scroll_timer = lv_timer_create(text_viewer_path_scroll_timer_cb, TEXT_VIEWER_PATH_SCROLL_DELAY_MS, ctx);
+    if (ctx->path_scroll_timer) {
+        lv_timer_set_repeat_count(ctx->path_scroll_timer, 1);
+    }
 }
 
 static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text)
