@@ -1351,33 +1351,46 @@ static void file_browser_schedule_wait_for_reconnection(void)
 static void file_browser_wait_for_reconnection_task(void* arg)
 {
     file_browser_ctx_t *ctx = &s_browser;
-    if (xSemaphoreTake(reconnection_success, portMAX_DELAY) == pdTRUE){
-        if (ctx->initialized) {
-            if (ctx->pending_go_parent) {
-                ctx->pending_go_parent = false;
-                esp_err_t nav_err = fs_nav_go_parent(&ctx->nav);
-                if (nav_err != ESP_OK){
-                    ESP_LOGE(TAG, "fs_nav_go_parent() failed after reconnection (%s), restarting...", esp_err_to_name(nav_err));
-                    goto restart;
-                }
+    bool restart_required = false;
+
+    if (xSemaphoreTake(reconnection_success, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to wait for SD reconnection, restarting...");
+        restart_required = true;
+    } else if (ctx->initialized) {
+        if (ctx->pending_go_parent) {
+            ctx->pending_go_parent = false;
+            esp_err_t nav_err = fs_nav_go_parent(&ctx->nav);
+            if (nav_err != ESP_OK){
+                ESP_LOGE(TAG, "fs_nav_go_parent() failed after reconnection (%s), restarting...", esp_err_to_name(nav_err));
+                restart_required = true;
             }
+        }
+
+        if (!restart_required) {
             esp_err_t err = file_browser_reload();
             if (err != ESP_OK){
                 ESP_LOGE(TAG, "file_browser_reload() failed while trying to refresh the screen after a sd card reconnection, restaring...\n");
-                goto restart;
-            }
-        } else {
-            esp_err_t err = file_browser_start();
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "file_browser_start() failed after SD reconnection (%s), restarting...", esp_err_to_name(err));
+                restart_required = true;
             }
         }
+    } else {
+        esp_err_t err = file_browser_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "file_browser_start() failed after SD reconnection (%s), restarting...", esp_err_to_name(err));
+            restart_required = true;
+        }
     }
-restart:
-    if (settings_is_time_valid()){
-        settings_shutdown_save_time();
+
+    file_browser_wait_task = NULL;
+
+    if (restart_required) {
+        if (settings_is_time_valid()){
+            settings_shutdown_save_time();
+        }
+        esp_restart();
     }
-    esp_restart();
+
+    vTaskDelete(NULL);
 }
 
 static void file_browser_sync_view(file_browser_ctx_t *ctx)
