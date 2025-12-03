@@ -100,6 +100,9 @@ static uint32_t crc32_fast(const void *data, size_t len);
  *  - replaces the current LVGL screen with a calibration screen,
  *  - temporarily disables the LVGL touch input device, and
  *  - restores the original screen and re-enables input before returning.
+ * 
+ * @param[in] calibration_found  True if a valid calibration was loaded from NVS,
+ *                               false if no calibration data is available.
  *
  * @warning Assumes the caller does not hold the LVGL/BSP display lock.
  *          This function acquires and releases bsp_display_lock() internally.
@@ -108,7 +111,7 @@ static uint32_t crc32_fast(const void *data, size_t len);
  * @return ESP_FAIL               Calibration failed due to a singular/ill-conditioned matrix.
  * @return Other esp_err_t codes  If sampling or saving to NVS fails.
  */
-static esp_err_t run_5point_touch_calibration(void);
+static esp_err_t run_5point_touch_calibration(bool calibration_found);
 
 /**
  * @brief Read averaged raw touch coordinates from the XPT2046 controller.
@@ -132,12 +135,13 @@ static esp_err_t sample_raw(int *rx, int *ry);
  *
  * Places a centered label, updates layout, and forces an immediate refresh.
  *
- * @param txt Null-terminated string to show in the center.
+ * @param[in] calibration_found  True if a valid calibration was loaded from NVS,
+ *                               false if no calibration data is available.
  *
  * @note Runs on the LVGL thread/context; make sure your platform’s display
  *       locking rules are respected before calling if required.
  */
-static void ui_show_calibration_message(void);
+static void ui_show_calibration_message(bool calibration_found);
 
 /**
  * @brief Show a modal Yes/No dialog with a 5-second auto-Yes countdown.
@@ -237,7 +241,7 @@ esp_err_t calibration_test(bool calibration_found)
     if (!calibration_found)
     {
         // No calibration saved: runs calibration directly
-        calibration_test_err = run_5point_touch_calibration();
+        calibration_test_err = run_5point_touch_calibration(calibration_found);
         if (calibration_test_err != ESP_OK){
             ESP_LOGE("Calibration Test", "5 point calibration failed: (%s)", esp_err_to_name(calibration_test_err));
             return calibration_test_err;
@@ -251,7 +255,7 @@ esp_err_t calibration_test(bool calibration_found)
 
         if (run)
         {
-            calibration_test_err = run_5point_touch_calibration();
+            calibration_test_err = run_5point_touch_calibration(calibration_found);
             if (calibration_test_err != ESP_OK){
                 ESP_LOGE("Calibration Test", "5 point calibration failed: (%s)", esp_err_to_name(calibration_test_err));
                 return calibration_test_err;
@@ -354,7 +358,7 @@ static uint32_t crc32_fast(const void *data, size_t len)
     return ~crc;
 }
 
-static esp_err_t run_5point_touch_calibration(void)
+static esp_err_t run_5point_touch_calibration(bool calibration_found)
 {
     const char *TAG = "5 Point Calibration";
     esp_err_t calibration_err;
@@ -372,10 +376,12 @@ static esp_err_t run_5point_touch_calibration(void)
     lv_obj_set_style_bg_color(cal_scr, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(cal_scr, LV_OPA_COVER, 0);
 
-    ui_show_calibration_message();
+    ui_show_calibration_message(calibration_found);
 
     bsp_display_unlock();
-    vTaskDelay(pdMS_TO_TICKS(CALIBRATION_MESSAGE_DISPLAY_TIME_MS));
+
+    calibration_found ? vTaskDelay(pdMS_TO_TICKS(CALIBRATION_MESSAGE_DISPLAY_TIME_MS)) :
+                        vTaskDelay(pdMS_TO_TICKS(CALIBRATION_MESSAGE_DISPLAY_TIME_MS) + 500);
 
     lv_indev_t *indev = touch_get_indev();
     if (indev)
@@ -520,7 +526,7 @@ static esp_err_t sample_raw(int *rx, int *ry)
     return ESP_OK;
 }
 
-static void ui_show_calibration_message(void)
+static void ui_show_calibration_message(bool calibration_found)
 {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_clean(scr);
@@ -530,7 +536,13 @@ static void ui_show_calibration_message(void)
 
     lv_obj_t *lbl = lv_label_create(scr);
     lv_obj_set_style_text_color(lbl, lv_color_black(), 0);
-    lv_label_set_text(lbl, "Get Ready For Touch Screen Calibration");
+    if (!calibration_found){
+        lv_label_set_text(lbl, "No Previous Calibration Found\n\nGet Ready For Touch Screen Calibration\n\nClick Inside The Pointing Arrows");
+    }else{
+        lv_label_set_text(lbl, "Get Ready For Touch Screen Calibration\n\nClick Inside The Pointing Arrows");
+    }
+    lv_obj_set_width(lbl, LV_PCT(100));
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(lbl);
 
     lv_obj_update_layout(scr);
