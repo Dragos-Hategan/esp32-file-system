@@ -913,16 +913,6 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_set_style_pad_all(row_actions2, 0, 0);
     lv_obj_set_height(row_actions2, LV_SIZE_CONTENT);
 
-    lv_obj_t *reset_button = lv_button_create(row_actions2);
-    lv_obj_set_flex_grow(reset_button, 1);
-    lv_obj_set_style_radius(reset_button, 8, 0);
-    lv_obj_set_style_pad_all(reset_button, 10, 0);    
-    lv_obj_add_event_cb(reset_button, settings_reset, LV_EVENT_CLICKED, ctx);
-    lv_obj_set_style_align(reset_button, LV_ALIGN_CENTER, 0);
-    lv_obj_t *reset_lbl = lv_label_create(reset_button);
-    lv_label_set_text(reset_lbl, "Reset");
-    lv_obj_center(reset_lbl);  
-
     lv_obj_t *restart_button = lv_button_create(row_actions2);
     lv_obj_set_flex_grow(restart_button, 1);
     lv_obj_set_style_radius(restart_button, 8, 0);
@@ -932,6 +922,16 @@ static void settings_build_screen(settings_ctx_t *ctx)
     lv_obj_t *restart_lbl = lv_label_create(restart_button);
     lv_label_set_text(restart_lbl, "Restart");
     lv_obj_center(restart_lbl);
+
+    lv_obj_t *reset_button = lv_button_create(row_actions2);
+    lv_obj_set_flex_grow(reset_button, 1);
+    lv_obj_set_style_radius(reset_button, 8, 0);
+    lv_obj_set_style_pad_all(reset_button, 10, 0);    
+    lv_obj_add_event_cb(reset_button, settings_reset, LV_EVENT_CLICKED, ctx);
+    lv_obj_set_style_align(reset_button, LV_ALIGN_CENTER, 0);
+    lv_obj_t *reset_lbl = lv_label_create(reset_button);
+    lv_label_set_text(reset_lbl, "Reset");
+    lv_obj_center(reset_lbl);  
 }
 
 static void settings_on_about(lv_event_t *e)
@@ -976,7 +976,7 @@ static void settings_on_about(lv_event_t *e)
     const char *lines[] = {
         "Brightness: adjusts backlight between " STR(SETTINGS_MINIMUM_BRIGHTNESS) "\% and 100\%.",
         "Screensaver: opens the screensaver configuration for dimming and turning off the screen.",
-        "Set Date/Time: opens the date/time picker to set clock values (MM/DD/YY HH:MM).",
+        "Set Date/Time: opens the date/time picker to set clock values (HH:MM MM/DD/YY).",
         "Rotate Screen: rotates the display 90 degrees each time.",
         "Run Calibration: starts the touch calibration wizard and saves the new calibration data.",
         "Restart: reboots the device after saving system changes. Note: settings are also saved by simply leaving settings.",
@@ -2253,19 +2253,26 @@ static void settings_restore_time_from_nvs(void)
 
 static void settings_on_brightness_changed(lv_event_t *e)
 {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_VALUE_CHANGED && code != LV_EVENT_RELEASED && code != LV_EVENT_CLICKED) {
+        return;
+    }
+
     settings_ctx_t *ctx = lv_event_get_user_data(e);
     if (!ctx || !ctx->brightness_label || !ctx->brightness_slider) {
         return;
     }
 
-    screensaver_dim_stop();
-    screensaver_off_stop();
-    s_settings_ctx.changing_brightness = true;    
-
     int val = lv_slider_get_value(ctx->brightness_slider);
     if (val < SETTINGS_MINIMUM_BRIGHTNESS) val = SETTINGS_MINIMUM_BRIGHTNESS;
     if (val > 100) val = 100;
     ctx->settings.brightness = val;
+    s_settings_ctx.changing_brightness = true;
+
+    /* Stop any screensaver dim/off fade using the latest brightness value. */
+    screensaver_dim_stop();
+    screensaver_off_stop();
+
     char txt[32];
     lv_snprintf(txt, sizeof(txt), "Brightness: %d%%", val);
     lv_label_set_text(ctx->brightness_label, txt);
