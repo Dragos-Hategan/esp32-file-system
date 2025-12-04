@@ -7,4 +7,4 @@ set(EXTRA_COMPONENT_DIRS
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(esp32-file-system)
+project(esp32-file-manager)

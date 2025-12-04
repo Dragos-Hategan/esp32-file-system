@@ -4,7 +4,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
-#include "file_browser.h"
+#include "file_manager.h"
 #include "settings.h"
 #include "sd_card.h"
 
@@ -23,9 +23,9 @@ static void main_task(void *arg)
         retry_init_sdspi();
     }    
 
-    esp_err_t fb_err = file_browser_start();
+    esp_err_t fb_err = file_manager_start();
     if (fb_err != ESP_OK) {
-        ESP_LOGE(TAG, "file_browser_start failed: %s (waiting for SD retry)", esp_err_to_name(fb_err));
+        ESP_LOGE(TAG, "file_manager_start failed: %s (waiting for SD retry)", esp_err_to_name(fb_err));
         vTaskDelete(NULL);
     }
 

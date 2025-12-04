@@ -12,7 +12,7 @@ extern "C" {
 typedef struct {
     const char *root_path;
     size_t max_items;
-} file_browser_config_t;
+} file_manager_config_t;
 
 /**
  * @brief Create the LVGL file-browser screen using the default SDSPI root.
@@ -27,17 +27,17 @@ typedef struct {
  * - Errors propagated from `fs_nav_init`
  * - ESP_ERR_TIMEOUT if the LVGL display lock cannot be acquired
  */
-esp_err_t file_browser_start(void);
+esp_err_t file_manager_start(void);
 
 /**
  * @brief Reset the header clock display to default (show button, hide label).
  */
-void file_browser_reset_clock_display(void);
+void file_manager_reset_clock_display(void);
 
 /**
  * @brief Mark the clock as user-set and refresh the header label/button state.
  */
-void file_browser_on_time_set(void);
+void file_manager_on_time_set(void);
 
 #ifdef __cplusplus
 }
