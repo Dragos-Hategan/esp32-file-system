@@ -1423,6 +1423,7 @@ static void file_browser_update_slider(file_browser_ctx_t *ctx)
         ctx->slider_suppress_change = prev_suppress;
         ctx->slider_pending_step = 0;
         lv_obj_add_state(ctx->list_slider, LV_STATE_DISABLED);
+        lv_obj_add_flag(ctx->list_slider, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
@@ -1448,6 +1449,7 @@ static void file_browser_update_slider(file_browser_ctx_t *ctx)
     ctx->slider_pending_step = current_step;
 
     lv_obj_remove_state(ctx->list_slider, LV_STATE_DISABLED);
+    lv_obj_clear_flag(ctx->list_slider, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void file_browser_schedule_wait_for_reconnection(void)

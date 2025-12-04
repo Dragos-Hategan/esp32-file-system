@@ -824,6 +824,7 @@ static void text_viewer_apply_mode(text_viewer_ctx_t *ctx)
         text_viewer_hide_keyboard(ctx);
         lv_obj_add_flag(ctx->save_btn, LV_OBJ_FLAG_HIDDEN);
         lv_textarea_clear_selection(ctx->text_area);
+        lv_textarea_set_cursor_pos(ctx->text_area, 0);
     }
     lv_obj_scroll_to_y(ctx->text_area, 0, LV_ANIM_OFF);
     text_viewer_update_buttons(ctx);
@@ -943,6 +944,7 @@ static void text_viewer_update_slider(text_viewer_ctx_t *ctx)
         ctx->slider_pending_step = 0;
         ctx->slider_drag_active = false;
         lv_obj_add_state(ctx->chunk_slider, LV_STATE_DISABLED);
+        lv_obj_add_flag(ctx->chunk_slider, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
@@ -966,6 +968,7 @@ static void text_viewer_update_slider(text_viewer_ctx_t *ctx)
     ctx->slider_suppress_change = prev;
     ctx->slider_pending_step = current_step;
     lv_obj_remove_state(ctx->chunk_slider, LV_STATE_DISABLED);
+    lv_obj_clear_flag(ctx->chunk_slider, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void text_viewer_on_slider_value_changed(lv_event_t *e)
