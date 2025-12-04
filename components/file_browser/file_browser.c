@@ -112,6 +112,8 @@ typedef struct {
     bool slider_suppress_change;
     bool slider_drag_active;
     size_t slider_pending_step;
+    bool preserve_window_on_reload;
+    size_t reload_anchor_index;
 } file_browser_ctx_t;
 
 static file_browser_ctx_t s_browser;
@@ -1349,6 +1351,8 @@ static void file_browser_reset_window(file_browser_ctx_t *ctx)
     ctx->list_has_paged = false;
     ctx->slider_drag_active = false;
     ctx->slider_pending_step = SIZE_MAX;
+    ctx->preserve_window_on_reload = false;
+    ctx->reload_anchor_index = SIZE_MAX;
 }
 
 static void file_browser_get_window_params(file_browser_ctx_t *ctx, size_t *window_size, size_t *step)
@@ -1395,9 +1399,40 @@ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_inde
     lv_obj_update_layout(ctx->list);
     file_browser_update_slider(ctx);
 
-    if (ctx->list_has_paged) {
+    lv_obj_t *anchor_obj = NULL;
+    if (anchor_index != SIZE_MAX) {
+        size_t count = 0;
+        fs_nav_items(&ctx->nav, &count);
+        if (anchor_index >= ctx->list_window_start && anchor_index < ctx->list_window_start + count) {
+            size_t rel = anchor_index - ctx->list_window_start;
+            uint32_t child_cnt = lv_obj_get_child_count(ctx->list);
+            for (uint32_t i = 0; i < child_cnt; i++) {
+                lv_obj_t *child = lv_obj_get_child(ctx->list, i);
+                if ((size_t)(uintptr_t)lv_obj_get_user_data(child) == rel) {
+                    anchor_obj = child;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (anchor_obj) {
+        if (center_anchor) {
+            lv_obj_scroll_to_view(anchor_obj, LV_ANIM_OFF);
+            lv_coord_t mid = lv_obj_get_y(anchor_obj) + lv_obj_get_height(anchor_obj) / 2;
+            lv_coord_t list_h = lv_obj_get_height(ctx->list);
+            lv_coord_t target = mid - list_h / 2;
+            lv_obj_scroll_to_y(ctx->list, target, LV_ANIM_OFF);
+        } else {
+            lv_obj_scroll_to_view(anchor_obj, LV_ANIM_OFF);
+        }
+    } else if (ctx->list_has_paged) {
         /* Center only after the first paging has occurred. */
         lv_obj_scroll_to_y(ctx->list, lv_obj_get_scroll_bottom(ctx->list) / 2, LV_ANIM_OFF);
+    } else if (scroll_to_top) {
+        lv_obj_scroll_to_y(ctx->list, 0, LV_ANIM_OFF);
+    } else {
+        lv_obj_scroll_to_y(ctx->list, lv_obj_get_scroll_bottom(ctx->list), LV_ANIM_OFF);
     }
 
     ctx->list_suppress_scroll = prev_suppress;
@@ -1422,6 +1457,7 @@ static void file_browser_update_slider(file_browser_ctx_t *ctx)
         lv_slider_set_value(ctx->list_slider, 0, LV_ANIM_OFF);
         ctx->slider_suppress_change = prev_suppress;
         ctx->slider_pending_step = 0;
+        ctx->slider_drag_active = false;
         lv_obj_add_state(ctx->list_slider, LV_STATE_DISABLED);
         lv_obj_add_flag(ctx->list_slider, LV_OBJ_FLAG_HIDDEN);
         return;
@@ -1521,11 +1557,22 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     if (!ctx->screen) {
         return;
     }
-    file_browser_reset_window(ctx);
+    bool preserve = ctx->preserve_window_on_reload;
+    ctx->preserve_window_on_reload = false;
+    size_t anchor = ctx->reload_anchor_index;
+    ctx->reload_anchor_index = SIZE_MAX;
+    if (!preserve) {
+        file_browser_reset_window(ctx);
+    } else {
+        ctx->list_at_top_edge = false;
+        ctx->list_at_bottom_edge = false;
+        ctx->list_suppress_scroll = false;
+        ctx->list_has_paged = false;
+    }
     file_browser_update_path_label(ctx);
     file_browser_update_sort_badges(ctx);
     file_browser_update_second_header(ctx);
-    file_browser_apply_window(ctx, ctx->list_window_start, SIZE_MAX, true, true);
+    file_browser_apply_window(ctx, ctx->list_window_start, anchor, true, true);
 }
 
 static bool check_second_header(file_browser_ctx_t *ctx)
@@ -1856,7 +1903,30 @@ static esp_err_t file_browser_reload(void)
         return err;
     }
 
-    file_browser_reset_window(ctx);
+    size_t saved_start = ctx->list_window_start;
+    bool preserve_window = ctx->preserve_window_on_reload;
+    ctx->preserve_window_on_reload = preserve_window;
+
+    if (preserve_window) {
+        size_t window_size = 1;
+        size_t step = 1;
+        file_browser_get_window_params(ctx, &window_size, &step);
+        size_t total = fs_nav_total_items(&ctx->nav);
+        if (window_size == 0) {
+            window_size = 1;
+        }
+        if (total > 0 && total > window_size) {
+            size_t max_start = total - window_size;
+            if (saved_start > max_start) {
+                saved_start = max_start;
+            }
+        } else {
+            saved_start = 0;
+        }
+        ctx->list_window_start = saved_start;
+    } else {
+        file_browser_reset_window(ctx);
+    }
 
     if (!bsp_display_lock(0)) {
         return ESP_ERR_TIMEOUT;
@@ -2079,6 +2149,7 @@ static void file_browser_on_item_click(lv_event_t *e)
     }
 
     if (fs_text_is_txt(item->name)) {
+        ctx->reload_anchor_index = ctx->list_window_start + index;
         char path[FS_NAV_MAX_PATH];
         if (fs_nav_compose_path(&ctx->nav, item->name, path, sizeof(path)) == ESP_OK) {
             text_viewer_open_opts_t opts = {
@@ -2237,6 +2308,7 @@ static void file_browser_on_item_long_press(lv_event_t *e)
     lv_obj_t *btn = lv_event_get_target(e);
     lv_obj_remove_state(btn, LV_STATE_PRESSED | LV_STATE_FOCUSED);
     size_t index = (size_t)(uintptr_t)lv_obj_get_user_data(btn);
+    ctx->reload_anchor_index = ctx->list_window_start + index;
 
     size_t count = 0;
     const fs_nav_item_t *items = fs_nav_items(&ctx->nav, &count);
@@ -2516,6 +2588,7 @@ static void file_browser_editor_closed(bool changed, void *user_ctx)
         return;
     }
 
+    ctx->preserve_window_on_reload = true;
     esp_err_t err = file_browser_reload();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to reload after editor: %s", esp_err_to_name(err));
@@ -3901,6 +3974,7 @@ static void file_browser_on_rename_accept(lv_event_t *e)
 
     file_browser_close_rename_dialog(ctx);
     file_browser_clear_action_state(ctx);
+    ctx->preserve_window_on_reload = true;
     esp_err_t reload = file_browser_reload();
     if (reload != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh after rename: %s", esp_err_to_name(reload));
