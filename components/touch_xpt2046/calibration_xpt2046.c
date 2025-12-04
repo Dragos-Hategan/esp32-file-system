@@ -144,14 +144,17 @@ static esp_err_t sample_raw(int *rx, int *ry);
 static void ui_show_calibration_message(bool calibration_found);
 
 /**
- * @brief Show a modal Yes/No dialog with a 5-second auto-Yes countdown.
+ * @brief Show a modal Yes/No dialog with a 10-second auto-yes countdown.
  *
- * Creates an LVGL message box centered on the active screen with the provided
- * question text and two buttons: **Yes** and **No**. Under the dialog it
- * displays a compact container with the text "Performing Calibration" plus a
- * circular progress arc and a numeric countdown (5 → 1).
+ * Builds a centered vertical stack on the top layer containing:
+ *  - an LVGL message box with the fixed question "Run Touch Screen Calibration?"
+ *    and two buttons: **Yes** and **No**
+ *  - a loader row showing "Performing Calibration In:" with a circular progress
+ *    arc and numeric countdown (10 → 1)
+ *  - a row with the label "Ask For Calibration At Powerup" and a switch (default ON)
+ *
  * The function blocks the calling task until the user presses a button or the
- * 5-second timeout elapses. On timeout, the result is treated as **Yes**.
+ * 10-second timeout elapses. On timeout, the result is treated as **Yes**.
  *
  * Thread-safety: internal calls to @ref bsp_display_lock / @ref bsp_display_unlock
  * protect LVGL operations. This function must be called from a task context
@@ -167,7 +170,8 @@ static void ui_show_calibration_message(bool calibration_found);
  * @retval true  if the user pressed **Yes** or the countdown timed out
  * @retval false if the user pressed **No**
  *
- * @note The countdown duration is fixed at 5000 ms in this implementation.
+ * @note The countdown duration is fixed at 10000ms in this implementation. The
+ *       toggle state is currently UI-only (no persistence/hook here).
  * @warning The function performs blocking waits (semaphore / vTaskDelay).
  * @warning This function assumes there is no LVGL display lock already acquired.
  */
