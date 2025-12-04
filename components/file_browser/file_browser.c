@@ -1516,15 +1516,19 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
         return;
     }
 
+    /* Window start gives the absolute offset of the first visible entry. */
+    size_t window_start = fs_nav_window_start(&ctx->nav);
+
     for (size_t i = 0; i < count; ++i) {
         fs_nav_ensure_meta(&ctx->nav, i);
         const fs_nav_entry_t *entry = &entries[i];
+        size_t display_index = window_start + i + 1; /* 1-based absolute index */
 
         char text[FS_NAV_MAX_NAME + 64];
         if (!entry->is_dir) {
             char meta[32];
             file_browser_format_size(entry->size_bytes, meta, sizeof(meta));
-            snprintf(text, sizeof(text), "%s\nSize: %s", entry->name, meta);
+            snprintf(text, sizeof(text), "%s\nItem: %zu | Size: %s", entry->name, display_index, meta);
         } else {
             size_t child_count = 0;
             char meta[32];
@@ -1533,7 +1537,7 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
                 snprintf(meta, sizeof(meta), "%u", (unsigned int)child_count);
                 count_label = meta;
             }
-            snprintf(text, sizeof(text), "%s\nEntries: %s", entry->name, count_label);
+            snprintf(text, sizeof(text), "%s\nItem: %zu | Sub-Items: %s", entry->name, display_index, count_label);
         }
 
         const char *icon = entry->is_dir
