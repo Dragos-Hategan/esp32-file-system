@@ -27,13 +27,13 @@
 
 #define TAG "file_browser"
 
-#define FILE_BROWSER_MAX_SORTABLE_ITEMS 256  /* 0 = unlimited */
-#define FILE_BROWSER_LIST_WINDOW_SIZE    40
-#define FILE_BROWSER_LIST_WINDOW_STEP    20
-#define FILE_BROWSER_PATH_SCROLL_DELAY_MS 1500
+#define FILE_BROWSER_MAX_SORTABLE_ITEMS     128  /* 0 = unlimited */
+#define FILE_BROWSER_LIST_WINDOW_SIZE       40
+#define FILE_BROWSER_LIST_WINDOW_STEP       20
+#define FILE_BROWSER_PATH_SCROLL_DELAY_MS   1500
 
-#define FILE_BROWSER_WAIT_STACK_SIZE_B   (6 * 1024)
-#define FILE_BROWSER_WAIT_PRIO    (4)
+#define FILE_BROWSER_WAIT_STACK_SIZE_B      (6 * 1024)
+#define FILE_BROWSER_WAIT_PRIO              (4)
 
 typedef struct {
     bool active;
@@ -1248,11 +1248,54 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_text_align(ctx->cancel_paste_label, LV_TEXT_ALIGN_CENTER, 0);
     file_browser_update_second_header(ctx);
 
-    ctx->list = lv_list_create(scr);
+    lv_coord_t slider_gap = 6;
+
+    lv_obj_t *list_row = lv_obj_create(scr);
+    lv_obj_remove_style_all(list_row);
+    lv_obj_set_size(list_row, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(list_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(list_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(list_row, slider_gap, 0);
+    lv_obj_set_style_pad_right(list_row, slider_gap, 0);
+    lv_obj_set_flex_grow(list_row, 1);
+
+    ctx->list = lv_list_create(list_row);
     lv_obj_set_flex_grow(ctx->list, 1);
-    lv_obj_set_size(ctx->list, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_height(ctx->list, LV_PCT(100));
     lv_obj_set_style_pad_all(ctx->list, 0, 0);
     lv_obj_add_event_cb(ctx->list, file_browser_on_list_scrolled, LV_EVENT_SCROLL, ctx);
+
+    lv_obj_t *slider_container = lv_obj_create(list_row);
+    lv_obj_remove_style_all(slider_container);
+    lv_obj_set_width(slider_container, 14);
+    lv_obj_set_height(slider_container, LV_PCT(100));
+    lv_obj_set_flex_flow(slider_container, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_all(slider_container, 0, 0);
+
+    lv_obj_t *list_slider = lv_slider_create(slider_container);
+    lv_slider_set_orientation(list_slider, LV_SLIDER_ORIENTATION_VERTICAL);
+    lv_slider_set_range(list_slider, 100, 0); /* Min at top, max at bottom */
+    lv_slider_set_value(list_slider, 0, LV_ANIM_OFF);
+    lv_obj_set_width(list_slider, LV_PCT(100));
+    lv_obj_set_height(list_slider, LV_PCT(100));
+    lv_obj_set_style_pad_top(list_slider, 15, 0);
+    lv_obj_set_style_pad_bottom(list_slider, 15, 0);
+    lv_obj_set_style_pad_left(list_slider, 0, 0);
+    lv_obj_set_style_pad_right(list_slider, 0, 0);
+    lv_obj_set_style_bg_color(list_slider, lv_color_hex(0x1f2933), 0);
+    lv_obj_set_style_bg_opa(list_slider, LV_OPA_60, 0);
+    lv_obj_set_style_radius(list_slider, 8, 0);
+    lv_obj_set_style_bg_color(list_slider, lv_color_hex(0x3fbf7f), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(list_slider, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(list_slider, 8, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(list_slider, lv_color_hex(0xf5f7fa), LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(list_slider, LV_OPA_COVER, LV_PART_KNOB);
+    lv_obj_set_style_border_color(list_slider, lv_color_hex(0x3fbf7f), LV_PART_KNOB);
+    lv_obj_set_style_border_width(list_slider, 1, LV_PART_KNOB);
+    lv_obj_set_style_radius(list_slider, 8, LV_PART_KNOB);
+    lv_obj_set_style_width(list_slider, 12, LV_PART_KNOB);
+    lv_obj_set_style_height(list_slider, 12, LV_PART_KNOB);
+    lv_obj_clear_flag(list_slider, LV_OBJ_FLAG_SCROLL_CHAIN); /* Keep list from scrolling when dragging slider */
 }
 
 static void file_browser_reset_window(file_browser_ctx_t *ctx)
