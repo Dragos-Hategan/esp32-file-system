@@ -173,6 +173,7 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  * @internal UI construction only; does not query filesystem.
  */
 static void file_browser_build_screen(file_browser_ctx_t *ctx);
+
 /**
  * @brief Click handler for the header "Set Date/Time" button.
  *
@@ -378,8 +379,37 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
  * @param e LVGL event (LV_EVENT_SCROLL) with user data = @c file_browser_ctx_t*.
  */
 static void file_browser_on_list_scrolled(lv_event_t *e);
+
+/**
+ * @brief Handle slider press/drag/release to jump between list windows.
+ *
+ * Tracks the target step while dragging and applies the list jump only on release.
+ * If the knob returns to the current step, no reload is triggered.
+ *
+ * @param e LVGL slider event (pressed/value changed/released) with user data = file_browser_ctx_t*.
+ */
 static void file_browser_on_slider_value_changed(lv_event_t *e);
+
+/**
+ * @brief Sync the slider range/value to the current list window.
+ *
+ * Recomputes slider bounds from total items and step size, clamps the knob to
+ * the active step (including the last window), disables the slider when only
+ * one window exists, and tracks the pending step for drag handling.
+ *
+ * @param[in,out] ctx Browser context with list and slider state.
+ */
 static void file_browser_update_slider(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Resolve window size and step with safe defaults.
+ *
+ * Uses context/config to produce non-zero values for both the window size and the step.
+ *
+ * @param[in]  ctx          Browser context.
+ * @param[out] window_size  Effective items-per-window (>=1).
+ * @param[out] step         Effective step size (>=1).
+ */
 static void file_browser_get_window_params(file_browser_ctx_t *ctx, size_t *window_size, size_t *step);
 
 /**
