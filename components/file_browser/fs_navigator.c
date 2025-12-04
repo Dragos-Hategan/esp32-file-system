@@ -46,11 +46,11 @@ static bool s_cmp_ascending = true;
 static bool fs_nav_is_valid_relative(const char *relative);
 
 /**
- * @brief Free capacity buffer, entry names and reset entry_count.
+ * @brief Free capacity buffer, item names and reset item_count.
  *
  * @param nav Navigator.
  */
-static void fs_nav_clear_entries(fs_nav_t *nav);
+static void fs_nav_clear_items(fs_nav_t *nav);
 
 /**
  * @brief Recompute absolute current path from root + relative.
@@ -106,34 +106,34 @@ static esp_err_t fs_nav_store_state(const fs_nav_t *nav);
 static esp_err_t fs_nav_load_state(fs_nav_t *nav);
 
 /**
- * @brief Ensure metadata (stat) for an entry if pending.
+ * @brief Ensure metadata (stat) for an item if pending.
  *
  * @param nav Navigator.
- * @param index Entry index.
+ * @param index Item index.
  * @return ESP_OK on success; ESP_ERR_INVALID_ARG on bad inputs; ESP_FAIL on stat errors.
  */
 esp_err_t fs_nav_ensure_meta(fs_nav_t *nav, size_t index);
 
 /**
- * @brief Sort the current entries array with current mode and direction.
+ * @brief Sort the current items array with current mode and direction.
  *
  * Directories are kept together and sorted by name; files follow the chosen mode.
  *
- * @param[in,out] nav Navigator (no-op for <2 entries or null array).
+ * @param[in,out] nav Navigator (no-op for <2 items or null array).
  */
-static void fs_nav_sort_entries(fs_nav_t *nav);
+static void fs_nav_sort_items(fs_nav_t *nav);
 
 /**
- * @brief qsort comparator for @c fs_nav_entry_t honoring directories-first and sort settings.
+ * @brief qsort comparator for @c fs_nav_item_t honoring directories-first and sort settings.
  *
  * Directories are always grouped before files. Within directories, sorting is by name to keep
  * navigation intuitive. Files are sorted by current mode (Name/Date/Size). Ties fall back to name.
  *
- * @param lhs Pointer to @c fs_nav_entry_t (left).
- * @param rhs Pointer to @c fs_nav_entry_t (right).
+ * @param lhs Pointer to @c fs_nav_item_t (left).
+ * @param rhs Pointer to @c fs_nav_item_t (right).
  * @return Negative/zero/positive per strcmp-style semantics; reversed if descending.
  */
-static int fs_nav_entry_compare(const void *lhs, const void *rhs);
+static int fs_nav_item_compare(const void *lhs, const void *rhs);
 
 esp_err_t fs_nav_init(fs_nav_t *nav, const fs_nav_config_t *cfg)
 {
@@ -142,7 +142,7 @@ esp_err_t fs_nav_init(fs_nav_t *nav, const fs_nav_config_t *cfg)
     }
 
     memset(nav, 0, sizeof(*nav));
-    nav->max_entries = cfg->max_entries;
+    nav->max_items = cfg->max_items;
     nav->sort_mode = FS_NAV_SORT_NAME;
     nav->ascending = true;
     nav->sort_enabled = true;
@@ -191,7 +191,7 @@ void fs_nav_deinit(fs_nav_t *nav)
     if (!nav) {
         return;
     }
-    fs_nav_clear_entries(nav);
+    fs_nav_clear_items(nav);
 }
 
 esp_err_t fs_nav_refresh(fs_nav_t *nav)
@@ -200,13 +200,13 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
         return ESP_ERR_INVALID_ARG;
     }
 
-    fs_nav_clear_entries(nav);
-    nav->total_entries = 0;
+    fs_nav_clear_items(nav);
+    nav->total_items = 0;
     nav->window_start = 0;
 
     esp_err_t storage_err = fs_nav_check_storage_ready(nav);
     if (storage_err != ESP_OK) {
-        nav->entry_count = 0;
+        nav->item_count = 0;
         return storage_err;
     }
 
@@ -215,7 +215,7 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
     DIR *dir = opendir(nav->current);
     if (!dir) {
         ESP_LOGE(TAG, "opendir(%s) failed: errno=%d", nav->current, errno);
-        nav->entry_count = 0;
+        nav->item_count = 0;
         return ESP_FAIL;
     }
 
@@ -231,18 +231,18 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
     closedir(dir);
     if (count_errno != 0) {
         ESP_LOGE(TAG, "readdir(%s) failed while counting: errno=%d", nav->current, count_errno);
-        nav->entry_count = 0;
+        nav->item_count = 0;
         return ESP_FAIL;
     }
 
     if (total == 0) {
-        nav->total_entries = 0;
-        nav->entry_count = 0;
+        nav->total_items = 0;
+        nav->item_count = 0;
         return ESP_OK;
     }
 
-    nav->total_entries = total;
-    nav->sort_enabled = (nav->max_entries == 0) ? true : (total <= nav->max_entries);
+    nav->total_items = total;
+    nav->sort_enabled = (nav->max_items == 0) ? true : (total <= nav->max_items);
 
     /* default window size if none provided */
     if (nav->window_size == 0) {
@@ -253,22 +253,22 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
         /* Load full list (<= limit) */
         size_t target = total;
         if (nav->capacity < target) {
-            fs_nav_entry_t *new_entries = heap_caps_realloc(nav->entries,
-                                                            target * sizeof(fs_nav_entry_t),
+            fs_nav_item_t *new_items = heap_caps_realloc(nav->items,
+                                                            target * sizeof(fs_nav_item_t),
                                                             MALLOC_CAP_8BIT);
-            if (!new_entries) {
-                ESP_LOGE(TAG, "Out of memory while allocating %zu entries for \"%s\"", target, nav->current);
-                nav->entry_count = 0;
+            if (!new_items) {
+                ESP_LOGE(TAG, "Out of memory while allocating %zu items for \"%s\"", target, nav->current);
+                nav->item_count = 0;
                 return ESP_ERR_NO_MEM;
             }
-            nav->entries = new_entries;
+            nav->items = new_items;
             nav->capacity = target;
         }
 
         dir = opendir(nav->current);
         if (!dir) {
             ESP_LOGE(TAG, "opendir(%s) failed on second pass: errno=%d", nav->current, errno);
-            nav->entry_count = 0;
+            nav->item_count = 0;
             return ESP_FAIL;
         }
 
@@ -279,14 +279,14 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
             if (strcmp(dent->d_name, ".") == 0 || strcmp(dent->d_name, "..") == 0) {
                 continue;
             }
-            fs_nav_entry_t *dest = &nav->entries[idx];
+            fs_nav_item_t *dest = &nav->items[idx];
             memset(dest, 0, sizeof(*dest));
 
             size_t name_len = strnlen(dent->d_name, FS_NAV_MAX_NAME - 1);
             dest->name = (char *)heap_caps_malloc(name_len + 1, MALLOC_CAP_8BIT);
             if (!dest->name) {
                 load_errno = ENOMEM;
-                ESP_LOGE(TAG, "Out of memory duplicating entry name");
+                ESP_LOGE(TAG, "Out of memory duplicating item name");
                 break;
             }
             memcpy(dest->name, dent->d_name, name_len);
@@ -303,15 +303,15 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
         closedir(dir);
 
         if (load_errno != 0) {
-            fs_nav_clear_entries(nav);
+            fs_nav_clear_items(nav);
             ESP_LOGE(TAG, "readdir(%s) failed while loading: errno=%d", nav->current, load_errno);
-            nav->entry_count = 0;
+            nav->item_count = 0;
             return ESP_FAIL;
         }
 
-        nav->entry_count = idx;
+        nav->item_count = idx;
         nav->window_start = 0;
-        fs_nav_sort_entries(nav);
+        fs_nav_sort_items(nav);
         return ESP_OK;
     }
 
@@ -320,9 +320,9 @@ esp_err_t fs_nav_refresh(fs_nav_t *nav)
     return fs_nav_set_window(nav, 0, nav->window_size);
 }
 
-const fs_nav_entry_t *fs_nav_entries(const fs_nav_t *nav, size_t *count)
+const fs_nav_item_t *fs_nav_items(const fs_nav_t *nav, size_t *count)
 {
-    if (!nav || !nav->entries) {
+    if (!nav || !nav->items) {
         if (count) {
             *count = 0;
         }
@@ -330,25 +330,25 @@ const fs_nav_entry_t *fs_nav_entries(const fs_nav_t *nav, size_t *count)
     }
 
     size_t ret = 0;
-    const fs_nav_entry_t *ptr = NULL;
+    const fs_nav_item_t *ptr = NULL;
 
     if (nav->sort_enabled) {
         size_t start = nav->window_start;
-        if (start >= nav->entry_count) {
+        if (start >= nav->item_count) {
             if (count) {
                 *count = 0;
             }
             return NULL;
         }
         size_t end = start + nav->window_size;
-        if (end > nav->entry_count) {
-            end = nav->entry_count;
+        if (end > nav->item_count) {
+            end = nav->item_count;
         }
         ret = end - start;
-        ptr = nav->entries + start;
+        ptr = nav->items + start;
     } else {
-        ret = nav->entry_count;
-        ptr = nav->entries;
+        ret = nav->item_count;
+        ptr = nav->items;
     }
 
     if (count) {
@@ -374,17 +374,17 @@ bool fs_nav_can_go_parent(const fs_nav_t *nav)
 
 esp_err_t fs_nav_enter(fs_nav_t *nav, size_t index)
 {
-    if (!nav || index >= nav->entry_count) {
+    if (!nav || index >= nav->item_count) {
         return ESP_ERR_INVALID_ARG;
     }
 
     size_t actual_index = nav->sort_enabled ? (nav->window_start + index) : index;
-    if (actual_index >= nav->entry_count) {
+    if (actual_index >= nav->item_count) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    const fs_nav_entry_t *entry = &nav->entries[actual_index];
-    if (!entry->is_dir) {
+    const fs_nav_item_t *item = &nav->items[actual_index];
+    if (!item->is_dir) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -393,9 +393,9 @@ esp_err_t fs_nav_enter(fs_nav_t *nav, size_t index)
 
     char next_relative[FS_NAV_MAX_PATH];
     if (prev_relative[0] == '\0') {
-        strlcpy(next_relative, entry->name, sizeof(next_relative));
+        strlcpy(next_relative, item->name, sizeof(next_relative));
     } else {
-        int written = snprintf(next_relative, sizeof(next_relative), "%s/%s", prev_relative, entry->name);
+        int written = snprintf(next_relative, sizeof(next_relative), "%s/%s", prev_relative, item->name);
         if (written <= 0 || (size_t)written >= sizeof(next_relative)) {
             return ESP_ERR_INVALID_SIZE;
         }
@@ -459,7 +459,7 @@ esp_err_t fs_nav_set_sort(fs_nav_t *nav, fs_nav_sort_mode_t mode, bool ascending
     nav->sort_mode = mode;
     nav->ascending = ascending;
     if (nav->sort_enabled) {
-        fs_nav_sort_entries(nav);
+        fs_nav_sort_items(nav);
     }
     return fs_nav_store_state(nav);
 }
@@ -485,43 +485,43 @@ esp_err_t fs_nav_set_window(fs_nav_t *nav, size_t start, size_t size)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (nav->total_entries == 0) {
-        fs_nav_clear_entries(nav);
+    if (nav->total_items == 0) {
+        fs_nav_clear_items(nav);
         nav->window_start = 0;
         nav->window_size = size;
         return ESP_OK;
     }
 
-    if (start >= nav->total_entries) {
-        start = nav->total_entries ? (nav->total_entries - 1) : 0;
+    if (start >= nav->total_items) {
+        start = nav->total_items ? (nav->total_items - 1) : 0;
     }
 
     nav->window_start = start;
     nav->window_size = size;
 
     if (nav->sort_enabled) {
-        /* All entries are already loaded; slicing is handled by fs_nav_entries */
+        /* All items are already loaded; slicing is handled by fs_nav_items */
         return ESP_OK;
     }
 
-    fs_nav_clear_entries(nav);
+    fs_nav_clear_items(nav);
 
     if (nav->capacity < size) {
-        fs_nav_entry_t *new_entries = heap_caps_realloc(nav->entries,
-                                                        size * sizeof(fs_nav_entry_t),
+        fs_nav_item_t *new_items = heap_caps_realloc(nav->items,
+                                                        size * sizeof(fs_nav_item_t),
                                                         MALLOC_CAP_8BIT);
-        if (!new_entries) {
-            ESP_LOGE(TAG, "Out of memory while allocating window of %zu entries for \"%s\"", size, nav->current);
+        if (!new_items) {
+            ESP_LOGE(TAG, "Out of memory while allocating window of %zu items for \"%s\"", size, nav->current);
             return ESP_ERR_NO_MEM;
         }
-        nav->entries = new_entries;
+        nav->items = new_items;
         nav->capacity = size;
     }
 
     DIR *dir = opendir(nav->current);
     if (!dir) {
         ESP_LOGE(TAG, "opendir(%s) failed while setting window: errno=%d", nav->current, errno);
-        nav->entry_count = 0;
+        nav->item_count = 0;
         return ESP_FAIL;
     }
 
@@ -546,13 +546,13 @@ esp_err_t fs_nav_set_window(fs_nav_t *nav, size_t start, size_t size)
             break;
         }
 
-        fs_nav_entry_t *dest = &nav->entries[idx];
+        fs_nav_item_t *dest = &nav->items[idx];
         memset(dest, 0, sizeof(*dest));
 
         size_t name_len = strnlen(dent->d_name, FS_NAV_MAX_NAME - 1);
         dest->name = (char *)heap_caps_malloc(name_len + 1, MALLOC_CAP_8BIT);
         if (!dest->name) {
-            ESP_LOGE(TAG, "Out of memory duplicating entry name");
+            ESP_LOGE(TAG, "Out of memory duplicating item name");
             break;
         }
         memcpy(dest->name, dent->d_name, name_len);
@@ -568,10 +568,10 @@ esp_err_t fs_nav_set_window(fs_nav_t *nav, size_t start, size_t size)
     int load_errno = errno;
     closedir(dir);
 
-    nav->entry_count = idx;
+    nav->item_count = idx;
 
     if (load_errno != 0) {
-        fs_nav_clear_entries(nav);
+        fs_nav_clear_items(nav);
         ESP_LOGE(TAG, "readdir(%s) failed while loading window: errno=%d", nav->current, load_errno);
         return ESP_FAIL;
     }
@@ -579,9 +579,9 @@ esp_err_t fs_nav_set_window(fs_nav_t *nav, size_t start, size_t size)
     return ESP_OK;
 }
 
-size_t fs_nav_total_entries(const fs_nav_t *nav)
+size_t fs_nav_total_items(const fs_nav_t *nav)
 {
-    return nav ? nav->total_entries : 0;
+    return nav ? nav->total_items : 0;
 }
 
 size_t fs_nav_window_start(const fs_nav_t *nav)
@@ -589,12 +589,12 @@ size_t fs_nav_window_start(const fs_nav_t *nav)
     return nav ? nav->window_start : 0;
 }
 
-esp_err_t fs_nav_compose_path(const fs_nav_t *nav, const char *entry_name, char *out, size_t out_len)
+esp_err_t fs_nav_compose_path(const fs_nav_t *nav, const char *item_name, char *out, size_t out_len)
 {
-    if (!nav || !entry_name || !out || out_len == 0 || entry_name[0] == '\0') {
+    if (!nav || !item_name || !out || out_len == 0 || item_name[0] == '\0') {
         return ESP_ERR_INVALID_ARG;
     }
-    int needed = snprintf(out, out_len, "%s/%s", nav->current, entry_name);
+    int needed = snprintf(out, out_len, "%s/%s", nav->current, item_name);
     if (needed < 0 || needed >= (int)out_len) {
         return ESP_ERR_INVALID_SIZE;
     }
@@ -603,15 +603,15 @@ esp_err_t fs_nav_compose_path(const fs_nav_t *nav, const char *entry_name, char 
 
 esp_err_t fs_nav_ensure_meta(fs_nav_t *nav, size_t index)
 {
-    if (!nav || !nav->entries) {
+    if (!nav || !nav->items) {
         return ESP_ERR_INVALID_ARG;
     }
     size_t actual_index = nav->sort_enabled ? (nav->window_start + index) : index;
-    if (actual_index >= nav->entry_count) {
+    if (actual_index >= nav->item_count) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    fs_nav_entry_t *e = &nav->entries[actual_index];
+    fs_nav_item_t *e = &nav->items[actual_index];
     if (!e->needs_stat) {
         return ESP_OK;
     }
@@ -666,21 +666,21 @@ static bool fs_nav_is_valid_relative(const char *relative)
     return true;
 }
 
-static void fs_nav_clear_entries(fs_nav_t *nav)
+static void fs_nav_clear_items(fs_nav_t *nav)
 {
-    if (!nav || !nav->entries) {
+    if (!nav || !nav->items) {
         return;
     }
-    for (size_t i = 0; i < nav->entry_count; ++i) {
-        if (nav->entries[i].name) {
-            heap_caps_free(nav->entries[i].name);
-            nav->entries[i].name = NULL;
+    for (size_t i = 0; i < nav->item_count; ++i) {
+        if (nav->items[i].name) {
+            heap_caps_free(nav->items[i].name);
+            nav->items[i].name = NULL;
         }
     }
-    heap_caps_free(nav->entries);
-    nav->entries = NULL;
+    heap_caps_free(nav->items);
+    nav->items = NULL;
     nav->capacity = 0;
-    nav->entry_count = 0;
+    nav->item_count = 0;
 }
 
 static void fs_nav_update_current_path(fs_nav_t *nav)
@@ -821,20 +821,20 @@ static esp_err_t fs_nav_load_state(fs_nav_t *nav)
     return ESP_OK;
 }
 
-static void fs_nav_sort_entries(fs_nav_t *nav)
+static void fs_nav_sort_items(fs_nav_t *nav)
 {
-    if (!nav || nav->entry_count < 2 || !nav->entries || !nav->sort_enabled) {
+    if (!nav || nav->item_count < 2 || !nav->items || !nav->sort_enabled) {
         return;
     }
     s_cmp_mode = nav->sort_mode;
     s_cmp_ascending = nav->ascending;
-    qsort(nav->entries, nav->entry_count, sizeof(fs_nav_entry_t), fs_nav_entry_compare);
+    qsort(nav->items, nav->item_count, sizeof(fs_nav_item_t), fs_nav_item_compare);
 }
 
-static int fs_nav_entry_compare(const void *lhs, const void *rhs)
+static int fs_nav_item_compare(const void *lhs, const void *rhs)
 {
-    const fs_nav_entry_t *a = lhs;
-    const fs_nav_entry_t *b = rhs;
+    const fs_nav_item_t *a = lhs;
+    const fs_nav_item_t *b = rhs;
 
     if (a->is_dir != b->is_dir) {
         return a->is_dir ? -1 : 1;

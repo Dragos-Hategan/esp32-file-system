@@ -11,7 +11,7 @@ extern "C" {
 
 typedef struct {
     const char *root_path;
-    size_t max_entries;
+    size_t max_items;
 } file_browser_config_t;
 
 /**

@@ -27,7 +27,7 @@
 
 #define TAG "file_browser"
 
-#define FILE_BROWSER_MAX_SORTABLE_ENTRIES 256  /* 0 = unlimited */
+#define FILE_BROWSER_MAX_SORTABLE_ITEMS 256  /* 0 = unlimited */
 #define FILE_BROWSER_LIST_WINDOW_SIZE    40
 #define FILE_BROWSER_LIST_WINDOW_STEP    20
 #define FILE_BROWSER_PATH_SCROLL_DELAY_MS 1500
@@ -41,7 +41,7 @@ typedef struct {
     bool is_txt;
     char name[FS_NAV_MAX_NAME];
     char directory[FS_NAV_MAX_PATH];
-} file_browser_action_entry_t;
+} file_browser_action_item_t;
 
 typedef struct {
     bool has_item;
@@ -94,7 +94,7 @@ typedef struct {
     lv_obj_t *rename_textarea;
     lv_obj_t *rename_keyboard;
     lv_timer_t *path_scroll_timer;
-    file_browser_action_entry_t action_entry;
+    file_browser_action_item_t action_item;
     file_browser_clipboard_t clipboard;
     char paste_conflict_path[FS_NAV_MAX_PATH];
     char paste_conflict_name[FS_NAV_MAX_NAME];
@@ -127,12 +127,12 @@ static bool file_browser_is_image(const char *name);
 static bool file_browser_is_jpeg(const char *name);
 
 /**
- * @brief Entry click handler for JPEG files (path composition + view stub).
+ * @brief Item click handler for JPEG files (path composition + view stub).
  *
  * @param ctx   Active browser context.
- * @param entry Navigator entry selected from the list.
+ * @param item  Navigator item selected from the list.
  */
-static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry);
+static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_item_t *item);
 
 /************************************ UI & Data Refresh Helpers ***********************************/
 
@@ -163,7 +163,7 @@ static void file_browser_wait_for_reconnection_task(void* arg);
  * - Main header with settings button and tools dropdown.
  * - Path label of the current absolute path.
  * - Secondary header row with parent button on the left and paste/cancel pinned to the right.
- * - Entry list (file/folder items).
+ * - Item list (file/folder items).
  *
  * @param[in,out] ctx Browser context (must be non-NULL).
  * @internal UI construction only; does not query filesystem.
@@ -243,9 +243,9 @@ static void file_browser_path_scroll_timer_cb(lv_timer_t *timer);
  * @brief Rebuild the visible list window and reposition scroll.
  *
  * @param[in,out] ctx Browser context.
- * @param start_index Global entry index to start the window from.
- * @param anchor_index Global entry index to keep visible/centered (SIZE_MAX to skip).
- * @param center_anchor True to center the anchor entry, false to align it near top.
+ * @param start_index Global item index to start the window from.
+ * @param anchor_index Global item index to keep visible/centered (SIZE_MAX to skip).
+ * @param center_anchor True to center the anchor item, false to align it near top.
  * @param scroll_to_top Fallback scroll when no anchor: true = top, false = bottom.
  */
 static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top);
@@ -253,7 +253,7 @@ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_inde
 /**
  * @brief Synchronize all UI elements with the current navigation state.
  *
- * Updates path, sort badges, and repopulates the list with current entries.
+ * Updates path, sort badges, and repopulates the list with current items.
  *
  * @param[in,out] ctx Browser context.
  */
@@ -300,12 +300,12 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
  static void file_browser_update_sort_badges(file_browser_ctx_t *ctx);
 
 /**
- * @brief Rebuild the entry list from current directory contents.
+ * @brief Rebuild the item list from current directory contents.
  *
- * Renders a window of entries starting at @c ctx->list_window_start for
- * @c ctx->list_window_size items (clamped to available entries). For files, a
+ * Renders a window of items starting at @c ctx->list_window_start for
+ * @c ctx->list_window_size items (clamped to available items). For files, a
  * formatted size is shown; for directories, the number of immediate children
- * is shown. The parent entry is rendered separately above the list (when
+ * is shown. The parent item is rendered separately above the list (when
  * available).
  *
  * @param[in,out] ctx Browser context.
@@ -313,20 +313,20 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
  static void file_browser_populate_list(file_browser_ctx_t *ctx);
 
  /**
- * @brief Count the number of entries inside a directory.
+ * @brief Count the number of items inside a directory.
  *
- * This function checks whether the given entry represents a directory,
+ * This function checks whether the given item represents a directory,
  * builds its full path, opens it, and counts all items inside it except
- * the special entries "." and "..".
+ * the special items "." and "..".
  *
  * @param[in]  ctx        File browser context. Must not be NULL.
- * @param[in]  entry      Directory entry to inspect. Must represent a directory.
- * @param[out] out_count  Output pointer where the number of entries will be stored.
+ * @param[in]  item      Directory item to inspect. Must represent a directory.
+ * @param[out] out_count  Output pointer where the number of items will be stored.
  *
  * @return true on success, false on invalid parameters, path composition failure,
  *         directory open failure, or any other error.
  */
- static bool file_browser_count_dir_entries(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry, size_t *out_count);
+ static bool file_browser_count_dir_items(file_browser_ctx_t *ctx, const fs_nav_item_t *item, size_t *out_count);
 
 /**
  * @brief Format a byte size into a short human-friendly string.
@@ -342,7 +342,7 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
 /**
  * @brief Refresh the current directory view and redraw the list.
  *
- * Re-reads directory entries via @c fs_nav_refresh and repopulates the LVGL list.
+ * Re-reads directory items via @c fs_nav_refresh and repopulates the LVGL list.
  *
  * @return
  * - ESP_OK on success
@@ -358,18 +358,18 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
 /***************************** List Interactions & Text Editor Bridge *****************************/
 
 /**
- * @brief Entry click handler: enter directories, open viewers or show prompt.
+ * @brief Item click handler: enter directories, open viewers or show prompt.
  *
- * If the clicked entry is a directory, enters it and refreshes the view.
+ * If the clicked item is a directory, enters it and refreshes the view.
  * If it is a supported file, opens an appropriate viewer. Otherwise, shows
  * an informational prompt.
  *
  * @param e LVGL event (CLICKED) with user data = @c file_browser_ctx_t*.
  */
- static void file_browser_on_entry_click(lv_event_t *e);
+ static void file_browser_on_item_click(lv_event_t *e);
 
 /**
- * @brief Scroll handler for the entry list (virtual window paging).
+ * @brief Scroll handler for the item list (virtual window paging).
  *
  * @param e LVGL event (LV_EVENT_SCROLL) with user data = @c file_browser_ctx_t*.
  */
@@ -403,15 +403,15 @@ static void file_browser_show_jpeg_unsupported_prompt(void);
  static void file_browser_on_unsupported_ok(lv_event_t *e);
 
 /**
- * @brief Long-press handler for a list entry to open the action menu.
+ * @brief Long-press handler for a list item to open the action menu.
  *
  * Marks the click as suppressed (to avoid triggering the normal click handler),
- * resolves the pressed entry index, prepares the action entry and shows
+ * resolves the pressed item index, prepares the action item and shows
  * the action menu.
  *
  * @param e LVGL event (LV_EVENT_LONG_PRESSED) with user data = @c file_browser_ctx_t*.
  */
- static void file_browser_on_entry_long_press(lv_event_t *e);
+ static void file_browser_on_item_long_press(lv_event_t *e);
 
 /**
  * @brief Parent button handler: go up one level (if possible).
@@ -643,7 +643,7 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
 /*********************************** Filesystem Utility Helpers ***********************************/
 
 /**
- * @brief Check if a given name is a valid filesystem entry name.
+ * @brief Check if a given name is a valid filesystem item name.
  *
  * Rejects empty strings and names containing '\', '/', ':', '*', '?', '"', '<', '>' or '|'.
  *
@@ -665,7 +665,7 @@ static void file_browser_on_folder_textarea_clicked(lv_event_t *e);
  * @brief Recursively delete a path, which may be a file or directory tree.
  *
  * Uses @c stat() to determine whether the path is a directory. If so, iterates
- * over entries with @c opendir()/readdir(), recursively deletes children and
+ * over items with @c opendir()/readdir(), recursively deletes children and
  * finally removes the directory. If it is a file, calls @c remove().
  *
  * Missing paths (ENOENT) are treated as success.
@@ -698,7 +698,7 @@ static esp_err_t file_browser_compute_total_size(const char *path, uint64_t *byt
  * @brief Update visibility and state of "Paste" and "Cancel Paste" buttons.
  *
  * When the clipboard is empty, both buttons are hidden and disabled.
- * When a clipboard entry exists (copy or cut), both buttons are shown
+ * When a clipboard item exists (copy or cut), both buttons are shown
  * and enabled, allowing the user to complete or cancel the paste action.
  *
  * @param ctx File browser context that owns the paste and cancel buttons.
@@ -797,7 +797,7 @@ static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char 
  * @param dest Absolute destination path.
  * @return ESP_OK on success or an error from @c file_browser_copy_file/dir.
  */
-static esp_err_t file_browser_copy_entry(const char *src, const char *dest);
+static esp_err_t file_browser_copy_item(const char *src, const char *dest);
 
 /**
  * @brief Copy a single file from src to dest using buffered I/O.
@@ -812,7 +812,7 @@ static esp_err_t file_browser_copy_file(const char *src, const char *dest);
  * @brief Recursively copy a directory tree.
  *
  * Creates the destination directory, then copies children recursively
- * via @c file_browser_copy_entry().
+ * via @c file_browser_copy_item().
  *
  * @param src  Absolute source directory path.
  * @param dest Absolute destination directory path (created).
@@ -841,7 +841,7 @@ static bool file_browser_path_exists(const char *path);
  * @brief Generate a unique "<name>_copy" (or numbered) within a directory.
  *
  * @param directory Destination directory path.
- * @param name      Base entry name.
+ * @param name      Base item name.
  * @param out       Output buffer for new name.
  * @param out_len   Size of @p out.
  * @return ESP_OK if a free name was produced; ESP_ERR_NOT_FOUND if none within attempts;
@@ -878,23 +878,23 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
 /************************************** Action Menu Workflow **************************************/
 
 /**
- * @brief Populate @c action_entry from a selected navigator entry.
+ * @brief Populate @c action_item from a selected navigator item.
  *
- * Copies flags, name and current directory into the context action entry
+ * Copies flags, name and current directory into the context action item
  * and marks it active.
  *
  * @param[in,out] ctx Browser context.
- * @param entry       Navigator entry to copy from.
+ * @param item       Navigator item to copy from.
  */
- static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry);
+ static void file_browser_prepare_action_item(file_browser_ctx_t *ctx, const fs_nav_item_t *item);
 
 /**
- * @brief Show the action menu (Rename/Delete/Edit/Cancel) for current entry.
+ * @brief Show the action menu (Rename/Delete/Edit/Cancel) for current item.
  *
- * Creates a message box containing the entry name and one or two button rows
- * depending on whether the entry is editable text or not.
+ * Creates a message box containing the item name and one or two button rows
+ * depending on whether the item is editable text or not.
  *
- * @param[in,out] ctx Browser context with an active @c action_entry.
+ * @param[in,out] ctx Browser context with an active @c action_item.
  */
  static void file_browser_show_action_menu(file_browser_ctx_t *ctx);
 
@@ -919,12 +919,12 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
  static void file_browser_on_action_button(lv_event_t *e);
 
 /**
- * @brief Show a Yes/No confirmation dialog for deleting the selected entry.
+ * @brief Show a Yes/No confirmation dialog for deleting the selected item.
  *
- * Creates a message box with the entry name in the prompt and two footer
+ * Creates a message box with the item name in the prompt and two footer
  * buttons: "Yes" and "No".
  *
- * @param[in,out] ctx Browser context with an active @c action_entry.
+ * @param[in,out] ctx Browser context with an active @c action_item.
  */
  static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx);
 
@@ -940,7 +940,7 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
 /**
  * @brief Handler for delete confirmation buttons ("Yes"/"No").
  *
- * If confirmed, attempts to delete the selected entry. Otherwise, clears
+ * If confirmed, attempts to delete the selected item. Otherwise, clears
  * the action state.
  *
  * @param e LVGL event (LV_EVENT_CLICKED) with user data = @c file_browser_ctx_t*.
@@ -948,15 +948,15 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
  static void file_browser_on_delete_confirm(lv_event_t *e);
 
 /**
- * @brief Delete the currently selected action entry and reload the browser.
+ * @brief Delete the currently selected action item and reload the browser.
  *
  * Composes the full path, recursively deletes the target (if directory) and
  * reloads the file browser view on success.
  *
- * @param[in,out] ctx Browser context with an active @c action_entry.
+ * @param[in,out] ctx Browser context with an active @c action_item.
  * @return ESP_OK on success or appropriate error code.
  */
- static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx);
+ static esp_err_t file_browser_delete_selected_item(file_browser_ctx_t *ctx);
 
 /**************************************************************************************************/
 
@@ -964,11 +964,11 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
 /************************************* Action State Utilities *************************************/
 
 /**
- * @brief Compose a full filesystem path from @c action_entry.directory and name.
+ * @brief Compose a full filesystem path from @c action_item.directory and name.
  *
  * Assembles "<directory>/<name>" into the provided output buffer.
  *
- * @param ctx      Browser context with an active @c action_entry.
+ * @param ctx      Browser context with an active @c action_item.
  * @param[out] out Output buffer for the composed path.
  * @param out_len  Size of @p out buffer in bytes.
  * @return ESP_OK on success,
@@ -981,7 +981,7 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
  * @brief Clear all transient action-related state from the context.
  *
  * Closes action and confirm dialogs, closes rename dialog and resets
- * the @c action_entry fields.
+ * the @c action_item fields.
  *
  * @param[in,out] ctx Browser context.
  */
@@ -1002,13 +1002,13 @@ static void file_browser_format_size64(uint64_t bytes, char *out, size_t out_len
  static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *msg, bool error);
 
 /**
- * @brief Show the rename dialog for the currently selected entry.
+ * @brief Show the rename dialog for the currently selected item.
  *
- * Builds an overlay with a card containing the current entry name, a status label,
+ * Builds an overlay with a card containing the current item name, a status label,
  * a text area prefilled with the existing name and a "Save"/"Cancel" button row,
  * plus an on-screen keyboard. Any existing rename dialog is closed first.
  *
- * @param[in,out] ctx Browser context with a valid @c action_entry.
+ * @param[in,out] ctx Browser context with a valid @c action_item.
  */
  static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx);
 
@@ -1043,13 +1043,13 @@ static void file_browser_on_rename_accept(lv_event_t *e);
 static void file_browser_on_rename_cancel(lv_event_t *e);
 
 /**
- * @brief Perform the actual filesystem rename for the current action entry.
+ * @brief Perform the actual filesystem rename for the current action item.
  *
  * Builds the old and new paths and calls @c rename(). If the destination
  * already exists, returns ESP_ERR_INVALID_STATE.
  *
- * @param[in,out] ctx   Browser context with an active @c action_entry.
- * @param new_name      New entry name (validated, non-empty).
+ * @param[in,out] ctx   Browser context with an active @c action_item.
+ * @param new_name      New item name (validated, non-empty).
  * @return ESP_OK on success or an appropriate ESP_ERR_* code on failure.
  */
 static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name);
@@ -1084,7 +1084,7 @@ esp_err_t file_browser_start(void)
 
     file_browser_config_t browser_cfg = {
         .root_path = CONFIG_SDSPI_MOUNT_POINT,
-        .max_entries = FILE_BROWSER_MAX_SORTABLE_ENTRIES,
+        .max_items = FILE_BROWSER_MAX_SORTABLE_ITEMS,
     };
 
     if (!browser_cfg.root_path) {
@@ -1100,7 +1100,7 @@ esp_err_t file_browser_start(void)
 
     fs_nav_config_t nav_cfg = {
         .root_path = browser_cfg.root_path,
-        .max_entries = browser_cfg.max_entries ? browser_cfg.max_entries : FILE_BROWSER_MAX_SORTABLE_ENTRIES,
+        .max_items = browser_cfg.max_items ? browser_cfg.max_items : FILE_BROWSER_MAX_SORTABLE_ITEMS,
     };
 
     esp_err_t nav_err = fs_nav_init(&ctx->nav, &nav_cfg);
@@ -1507,8 +1507,8 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
     lv_obj_clean(ctx->list);
 
     size_t count = 0;
-    const fs_nav_entry_t *entries = fs_nav_entries(&ctx->nav, &count);
-    if (!entries || count == 0) {
+    const fs_nav_item_t *items = fs_nav_items(&ctx->nav, &count);
+    if (!items || count == 0) {
         lv_obj_t *lbl = lv_label_create(ctx->list);
         lv_label_set_text(lbl, "Empty folder");
         lv_obj_center(lbl);
@@ -1516,50 +1516,50 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
         return;
     }
 
-    /* Window start gives the absolute offset of the first visible entry. */
+    /* Window start gives the absolute offset of the first visible item. */
     size_t window_start = fs_nav_window_start(&ctx->nav);
 
     for (size_t i = 0; i < count; ++i) {
         fs_nav_ensure_meta(&ctx->nav, i);
-        const fs_nav_entry_t *entry = &entries[i];
+        const fs_nav_item_t *item = &items[i];
         size_t display_index = window_start + i + 1; /* 1-based absolute index */
 
         char text[FS_NAV_MAX_NAME + 64];
-        if (!entry->is_dir) {
+        if (!item->is_dir) {
             char meta[32];
-            file_browser_format_size(entry->size_bytes, meta, sizeof(meta));
-            snprintf(text, sizeof(text), "%s\nItem: %zu | Size: %s", entry->name, display_index, meta);
+            file_browser_format_size(item->size_bytes, meta, sizeof(meta));
+            snprintf(text, sizeof(text), "%s\nItem: %zu | Size: %s", item->name, display_index, meta);
         } else {
             size_t child_count = 0;
             char meta[32];
             const char *count_label = "Unknown";
-            if (file_browser_count_dir_entries(ctx, entry, &child_count)) {
+            if (file_browser_count_dir_items(ctx, item, &child_count)) {
                 snprintf(meta, sizeof(meta), "%u", (unsigned int)child_count);
                 count_label = meta;
             }
-            snprintf(text, sizeof(text), "%s\nItem: %zu | Sub-Items: %s", entry->name, display_index, count_label);
+            snprintf(text, sizeof(text), "%s\nItem: %zu | Sub-Items: %s", item->name, display_index, count_label);
         }
 
-        const char *icon = entry->is_dir
+        const char *icon = item->is_dir
                                ? LV_SYMBOL_DIRECTORY
-                               : (file_browser_is_image(entry->name) ? LV_SYMBOL_IMAGE : LV_SYMBOL_FILE);
+                               : (file_browser_is_image(item->name) ? LV_SYMBOL_IMAGE : LV_SYMBOL_FILE);
 
         lv_obj_t *btn = lv_list_add_btn(ctx->list, icon, text);
         lv_obj_set_style_pad_all(btn, 3, LV_PART_MAIN);
         lv_obj_set_user_data(btn, (void *)(uintptr_t)i);
-        lv_obj_add_event_cb(btn, file_browser_on_entry_click, LV_EVENT_CLICKED, ctx);
-        lv_obj_add_event_cb(btn, file_browser_on_entry_long_press, LV_EVENT_LONG_PRESSED, ctx);
+        lv_obj_add_event_cb(btn, file_browser_on_item_click, LV_EVENT_CLICKED, ctx);
+        lv_obj_add_event_cb(btn, file_browser_on_item_long_press, LV_EVENT_LONG_PRESSED, ctx);
     }
 }
 
-static bool file_browser_count_dir_entries(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry, size_t *out_count)
+static bool file_browser_count_dir_items(file_browser_ctx_t *ctx, const fs_nav_item_t *item, size_t *out_count)
 {
-    if (!ctx || !entry || !out_count || !entry->is_dir) {
+    if (!ctx || !item || !out_count || !item->is_dir) {
         return false;
     }
 
     char path[FS_NAV_MAX_PATH];
-    if (fs_nav_compose_path(&ctx->nav, entry->name, path, sizeof(path)) != ESP_OK) {
+    if (fs_nav_compose_path(&ctx->nav, item->name, path, sizeof(path)) != ESP_OK) {
         return false;
     }
 
@@ -1640,15 +1640,15 @@ static bool file_browser_is_jpeg(const char *name)
     return strcasecmp(dot, ".jpg") == 0 || strcasecmp(dot, ".jpeg") == 0;
 }
 
-static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
+static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_item_t *item)
 {
-    if (!ctx || !entry) {
+    if (!ctx || !item) {
         return;
     }
 
     char path[FS_NAV_MAX_PATH];
-    if (fs_nav_compose_path(&ctx->nav, entry->name, path, sizeof(path)) != ESP_OK) {
-        ESP_LOGE(TAG, "Path too long for \"%s\"", entry->name);
+    if (fs_nav_compose_path(&ctx->nav, item->name, path, sizeof(path)) != ESP_OK) {
+        ESP_LOGE(TAG, "Path too long for \"%s\"", item->name);
         return;
     }
 
@@ -1662,7 +1662,7 @@ static void file_browser_handle_jpeg(file_browser_ctx_t *ctx, const fs_nav_entry
     char lv_path[FS_NAV_MAX_PATH + 4];
     int needed = snprintf(lv_path, sizeof(lv_path), "S:%s", relative);
     if (needed < 0 || needed >= (int)sizeof(lv_path)) {
-        ESP_LOGE(TAG, "LVGL path too long for \"%s\"", entry->name);
+        ESP_LOGE(TAG, "LVGL path too long for \"%s\"", item->name);
         return;
     }
 
@@ -1884,7 +1884,7 @@ void file_browser_on_time_set(void)
     file_browser_clock_update_async(NULL);
 }
 
-static void file_browser_on_entry_click(lv_event_t *e)
+static void file_browser_on_item_click(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
     if (!ctx) {
@@ -1900,32 +1900,32 @@ static void file_browser_on_entry_click(lv_event_t *e)
     size_t index = (size_t)(uintptr_t)lv_obj_get_user_data(btn);
 
     size_t count = 0;
-    const fs_nav_entry_t *entries = fs_nav_entries(&ctx->nav, &count);
-    if (!entries || index >= count) {
+    const fs_nav_item_t *items = fs_nav_items(&ctx->nav, &count);
+    if (!items || index >= count) {
         return;
     }
 
-    const fs_nav_entry_t *entry = &entries[index];
+    const fs_nav_item_t *item = &items[index];
     fs_nav_ensure_meta(&ctx->nav, index);
-    entry = &entries[index];
-    if (entry->is_dir) {
+    item = &items[index];
+    if (item->is_dir) {
         file_browser_show_loading(ctx);
         esp_err_t err = fs_nav_enter(&ctx->nav, index);
         file_browser_hide_loading(ctx);
         if (err == ESP_OK) {
             file_browser_sync_view(ctx);
         } else {
-            const char *entry_name = (entry && entry->name) ? entry->name : "<entry>";
-            ESP_LOGE(TAG, "Failed to enter \"%s\": %s", entry_name, esp_err_to_name(err));
+            const char *item_name = (item && item->name) ? item->name : "<item>";
+            ESP_LOGE(TAG, "Failed to enter \"%s\": %s", item_name, esp_err_to_name(err));
             sdspi_schedule_sd_retry();
             file_browser_schedule_wait_for_reconnection();
         }
         return;
     }
 
-    if (fs_text_is_txt(entry->name)) {
+    if (fs_text_is_txt(item->name)) {
         char path[FS_NAV_MAX_PATH];
-        if (fs_nav_compose_path(&ctx->nav, entry->name, path, sizeof(path)) == ESP_OK) {
+        if (fs_nav_compose_path(&ctx->nav, item->name, path, sizeof(path)) == ESP_OK) {
             text_viewer_open_opts_t opts = {
                 .path = path,
                 .return_screen = ctx->screen,
@@ -1935,17 +1935,17 @@ static void file_browser_on_entry_click(lv_event_t *e)
             esp_err_t err = text_viewer_open(&opts);
             file_browser_hide_loading(ctx);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to view \"%s\": %s", entry->name, esp_err_to_name(err));
+                ESP_LOGE(TAG, "Failed to view \"%s\": %s", item->name, esp_err_to_name(err));
                 sdspi_schedule_sd_retry();
             }
         } else {
-            ESP_LOGE(TAG, "Path too long for \"%s\"", entry->name);
+            ESP_LOGE(TAG, "Path too long for \"%s\"", item->name);
         }
         return;
     }
 
-    if (file_browser_is_jpeg(entry->name)) {
-        file_browser_handle_jpeg(ctx, entry);
+    if (file_browser_is_jpeg(item->name)) {
+        file_browser_handle_jpeg(ctx, item);
         return;
     }
 
@@ -1962,7 +1962,7 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
     bool at_top = lv_obj_get_scroll_top(ctx->list) <= 0;
     bool at_bottom = lv_obj_get_scroll_bottom(ctx->list) <= 0;
 
-    size_t total = fs_nav_total_entries(&ctx->nav);
+    size_t total = fs_nav_total_items(&ctx->nav);
 
     size_t window_size = ctx->list_window_size ? ctx->list_window_size : FILE_BROWSER_LIST_WINDOW_SIZE;
     if (window_size == 0) {
@@ -1976,7 +1976,7 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
     if (at_bottom && !ctx->list_at_bottom_edge) {
         ctx->list_at_bottom_edge = true;
         size_t current_count = 0;
-        fs_nav_entries(&ctx->nav, &current_count);
+        fs_nav_items(&ctx->nav, &current_count);
         size_t available_end = ctx->list_window_start + current_count;
         if (total > window_size && available_end < total) {
             size_t max_start = (total > window_size) ? (total - window_size) : 0;
@@ -2005,7 +2005,7 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
     }
 }
 
-static void file_browser_on_entry_long_press(lv_event_t *e)
+static void file_browser_on_item_long_press(lv_event_t *e)
 {
     file_browser_ctx_t *ctx = lv_event_get_user_data(e);
     if (!ctx) {
@@ -2018,15 +2018,15 @@ static void file_browser_on_entry_long_press(lv_event_t *e)
     size_t index = (size_t)(uintptr_t)lv_obj_get_user_data(btn);
 
     size_t count = 0;
-    const fs_nav_entry_t *entries = fs_nav_entries(&ctx->nav, &count);
-    if (!entries || index >= count) {
+    const fs_nav_item_t *items = fs_nav_items(&ctx->nav, &count);
+    if (!items || index >= count) {
         return;
     }
 
     fs_nav_ensure_meta(&ctx->nav, index);
-    entries = fs_nav_entries(&ctx->nav, &count);
-    const fs_nav_entry_t *entry = &entries[index];
-    file_browser_prepare_action_entry(ctx, entry);
+    items = fs_nav_items(&ctx->nav, &count);
+    const fs_nav_item_t *item = &items[index];
+    file_browser_prepare_action_item(ctx, item);
     file_browser_show_action_menu(ctx);
 }
 
@@ -2771,9 +2771,9 @@ static esp_err_t file_browser_copy_dir(const char *src, const char *dest)
             file_browser_delete_path(dest);
             return ESP_ERR_INVALID_SIZE;
         }
-        esp_err_t err = file_browser_copy_entry(child_src, child_dest);
+        esp_err_t err = file_browser_copy_item(child_src, child_dest);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to copy entry: (%s)", esp_err_to_name(err));
+            ESP_LOGE(TAG, "Failed to copy item: (%s)", esp_err_to_name(err));
             closedir(dir);
             file_browser_delete_path(dest);
             return err;
@@ -2783,7 +2783,7 @@ static esp_err_t file_browser_copy_dir(const char *src, const char *dest)
     return ESP_OK;
 }
 
-static esp_err_t file_browser_copy_entry(const char *src, const char *dest)
+static esp_err_t file_browser_copy_item(const char *src, const char *dest)
 {
     if (!src || !dest) {
         return ESP_ERR_INVALID_ARG;
@@ -2936,7 +2936,7 @@ static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char 
             if (errno != EXDEV) {
                 ESP_LOGW(TAG, "rename(%s -> %s) failed (errno=%d), falling back to copy+delete", ctx->clipboard.src_path, dest_path, errno);
             }
-            err = file_browser_copy_entry(ctx->clipboard.src_path, dest_path);
+            err = file_browser_copy_item(ctx->clipboard.src_path, dest_path);
             if (err == ESP_OK) {
                 err = file_browser_delete_path(ctx->clipboard.src_path);
                 if (err != ESP_OK) {
@@ -2951,12 +2951,12 @@ static esp_err_t file_browser_perform_paste(file_browser_ctx_t *ctx, const char 
         return err;
     }
 
-    err = file_browser_copy_entry(ctx->clipboard.src_path, dest_path);
+    err = file_browser_copy_item(ctx->clipboard.src_path, dest_path);
     if (err == ESP_OK) {
         file_browser_clear_clipboard(ctx);
         file_browser_update_second_header(ctx);
     }else{
-        ESP_LOGE(TAG, "Failed to copy entry: (%s)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to copy item: (%s)", esp_err_to_name(err));
     }
     return err;
 }
@@ -3189,25 +3189,25 @@ static void file_browser_on_copy_confirm(lv_event_t *e)
     }
 }
 
-static void file_browser_prepare_action_entry(file_browser_ctx_t *ctx, const fs_nav_entry_t *entry)
+static void file_browser_prepare_action_item(file_browser_ctx_t *ctx, const fs_nav_item_t *item)
 {
-    if (!ctx || !entry) {
+    if (!ctx || !item) {
         return;
     }
-    ctx->action_entry.active = true;
-    ctx->action_entry.is_dir = entry->is_dir;
-    ctx->action_entry.is_txt = !entry->is_dir && fs_text_is_txt(entry->name);
-    strlcpy(ctx->action_entry.name, entry->name, sizeof(ctx->action_entry.name));
+    ctx->action_item.active = true;
+    ctx->action_item.is_dir = item->is_dir;
+    ctx->action_item.is_txt = !item->is_dir && fs_text_is_txt(item->name);
+    strlcpy(ctx->action_item.name, item->name, sizeof(ctx->action_item.name));
     const char *dir = fs_nav_current_path(&ctx->nav);
     if (!dir) {
         dir = "";
     }
-    strlcpy(ctx->action_entry.directory, dir, sizeof(ctx->action_entry.directory));
+    strlcpy(ctx->action_item.directory, dir, sizeof(ctx->action_item.directory));
 }
 
 static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
 {
-    if (!ctx || !ctx->action_entry.active) {
+    if (!ctx || !ctx->action_item.active) {
         return;
     }
     file_browser_close_action_menu(ctx);
@@ -3218,7 +3218,7 @@ static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
     lv_obj_center(mbox);
 
     lv_obj_t *label = lv_label_create(mbox);
-    lv_label_set_text(label, ctx->action_entry.name);
+    lv_label_set_text(label, ctx->action_item.name);
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -3279,7 +3279,7 @@ static void file_browser_show_action_menu(file_browser_ctx_t *ctx)
     lv_obj_set_flex_flow(row3, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_gap(row3, 8, 0);
 
-    bool has_edit = (!ctx->action_entry.is_dir && ctx->action_entry.is_txt);
+    bool has_edit = (!ctx->action_item.is_dir && ctx->action_item.is_txt);
     if (has_edit) {
         lv_obj_t *edit_btn = lv_button_create(row3);
         lv_obj_set_flex_grow(edit_btn, 1);
@@ -3327,7 +3327,7 @@ static void file_browser_on_action_button(lv_event_t *e)
 
     switch (action) {
         case FILE_BROWSER_ACTION_EDIT: {
-            if (!ctx->action_entry.active || ctx->action_entry.is_dir || !ctx->action_entry.is_txt) {
+            if (!ctx->action_item.active || ctx->action_item.is_dir || !ctx->action_item.is_txt) {
                 return;
             }
             char path[FS_NAV_MAX_PATH];
@@ -3344,7 +3344,7 @@ static void file_browser_on_action_button(lv_event_t *e)
             };
             esp_err_t err = text_viewer_open(&opts);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to edit \"%s\": %s", ctx->action_entry.name, esp_err_to_name(err));
+                ESP_LOGE(TAG, "Failed to edit \"%s\": %s", ctx->action_item.name, esp_err_to_name(err));
                 sdspi_schedule_sd_retry();
             } else {
                 file_browser_clear_action_state(ctx);
@@ -3359,7 +3359,7 @@ static void file_browser_on_action_button(lv_event_t *e)
             break;
         case FILE_BROWSER_ACTION_COPY:
         case FILE_BROWSER_ACTION_CUT: {
-            if (!ctx->action_entry.active) {
+            if (!ctx->action_item.active) {
                 return;
             }
             char src_path[FS_NAV_MAX_PATH];
@@ -3370,8 +3370,8 @@ static void file_browser_on_action_button(lv_event_t *e)
             memset(&ctx->clipboard, 0, sizeof(ctx->clipboard));
             ctx->clipboard.has_item = true;
             ctx->clipboard.cut = (action == FILE_BROWSER_ACTION_CUT);
-            ctx->clipboard.is_dir = ctx->action_entry.is_dir;
-            strlcpy(ctx->clipboard.name, ctx->action_entry.name, sizeof(ctx->clipboard.name));
+            ctx->clipboard.is_dir = ctx->action_item.is_dir;
+            strlcpy(ctx->clipboard.name, ctx->action_item.name, sizeof(ctx->clipboard.name));
             strlcpy(ctx->clipboard.src_path, src_path, sizeof(ctx->clipboard.src_path));
             file_browser_update_second_header(ctx);
             file_browser_clear_action_state(ctx);
@@ -3386,7 +3386,7 @@ static void file_browser_on_action_button(lv_event_t *e)
 
 static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx)
 {
-    if (!ctx || !ctx->action_entry.active) {
+    if (!ctx || !ctx->action_item.active) {
         return;
     }
     file_browser_close_delete_confirm(ctx);
@@ -3397,7 +3397,7 @@ static void file_browser_show_delete_confirm(file_browser_ctx_t *ctx)
     lv_obj_center(mbox);
 
     lv_obj_t *label = lv_label_create(mbox);
-    lv_label_set_text_fmt(label, "Delete \"%s\"?", ctx->action_entry.name);
+    lv_label_set_text_fmt(label, "Delete \"%s\"?", ctx->action_item.name);
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -3464,7 +3464,7 @@ static void file_browser_on_delete_confirm(lv_event_t *e)
     }
 
     file_browser_show_loading(ctx);
-    esp_err_t err = file_browser_delete_selected_entry(ctx);
+    esp_err_t err = file_browser_delete_selected_item(ctx);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Delete failed: %s", esp_err_to_name(err));
         sdspi_schedule_sd_retry();
@@ -3472,9 +3472,9 @@ static void file_browser_on_delete_confirm(lv_event_t *e)
     file_browser_hide_loading(ctx);
 }
 
-static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx)
+static esp_err_t file_browser_delete_selected_item(file_browser_ctx_t *ctx)
 {
-    if (!ctx || !ctx->action_entry.active) {
+    if (!ctx || !ctx->action_item.active) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -3496,13 +3496,13 @@ static esp_err_t file_browser_delete_selected_entry(file_browser_ctx_t *ctx)
 
 static esp_err_t file_browser_action_compose_path(const file_browser_ctx_t *ctx, char *out, size_t out_len)
 {
-    if (!ctx || !ctx->action_entry.active || !out || out_len == 0) {
+    if (!ctx || !ctx->action_item.active || !out || out_len == 0) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (ctx->action_entry.directory[0] == '\0' || ctx->action_entry.name[0] == '\0') {
+    if (ctx->action_item.directory[0] == '\0' || ctx->action_item.name[0] == '\0') {
         return ESP_ERR_INVALID_STATE;
     }
-    int needed = snprintf(out, out_len, "%s/%s", ctx->action_entry.directory, ctx->action_entry.name);
+    int needed = snprintf(out, out_len, "%s/%s", ctx->action_item.directory, ctx->action_item.name);
     if (needed < 0 || needed >= (int)out_len) {
         return ESP_ERR_INVALID_SIZE;
     }
@@ -3518,11 +3518,11 @@ static void file_browser_clear_action_state(file_browser_ctx_t *ctx)
     file_browser_close_delete_confirm(ctx);
     file_browser_close_copy_confirm(ctx);
     file_browser_close_rename_dialog(ctx);
-    ctx->action_entry.active = false;
-    ctx->action_entry.is_dir = false;
-    ctx->action_entry.is_txt = false;
-    ctx->action_entry.name[0] = '\0';
-    ctx->action_entry.directory[0] = '\0';
+    ctx->action_item.active = false;
+    ctx->action_item.is_dir = false;
+    ctx->action_item.is_txt = false;
+    ctx->action_item.name[0] = '\0';
+    ctx->action_item.directory[0] = '\0';
     ctx->paste_target_valid = false;
     ctx->paste_target_path[0] = '\0';
 }
@@ -3552,7 +3552,7 @@ static void file_browser_set_rename_status(file_browser_ctx_t *ctx, const char *
 
 static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx)
 {
-    if (!ctx || !ctx->action_entry.active) {
+    if (!ctx || !ctx->action_item.active) {
         return;
     }
     file_browser_close_rename_dialog(ctx);
@@ -3573,7 +3573,7 @@ static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx)
     lv_obj_t *content = lv_msgbox_get_content(dlg);
     lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *label = lv_label_create(content);
-    lv_label_set_text(label, ctx->action_entry.is_dir ? "Folder name" : "File name");
+    lv_label_set_text(label, ctx->action_item.is_dir ? "Folder name" : "File name");
     lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
@@ -3583,7 +3583,7 @@ static void file_browser_show_rename_dialog(file_browser_ctx_t *ctx)
     ctx->rename_textarea = lv_textarea_create(content);
     lv_textarea_set_one_line(ctx->rename_textarea, true);
     lv_textarea_set_max_length(ctx->rename_textarea, FS_NAV_MAX_NAME - 1);
-    lv_textarea_set_text(ctx->rename_textarea, ctx->action_entry.name);
+    lv_textarea_set_text(ctx->rename_textarea, ctx->action_item.name);
     lv_textarea_set_cursor_pos(ctx->rename_textarea, LV_TEXTAREA_CURSOR_LAST);
     lv_obj_set_width(ctx->rename_textarea, LV_PCT(100));
 
@@ -3659,7 +3659,7 @@ static void file_browser_on_rename_accept(lv_event_t *e)
         return;
     }
 
-    if (strcmp(name, ctx->action_entry.name) == 0) {
+    if (strcmp(name, ctx->action_item.name) == 0) {
         file_browser_close_rename_dialog(ctx);
         file_browser_clear_action_state(ctx);
         return;
@@ -3699,7 +3699,7 @@ static void file_browser_on_rename_cancel(lv_event_t *e)
 
 static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char *new_name)
 {
-    if (!ctx || !ctx->action_entry.active || !new_name || new_name[0] == '\0') {
+    if (!ctx || !ctx->action_item.active || !new_name || new_name[0] == '\0') {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -3710,7 +3710,7 @@ static esp_err_t file_browser_perform_rename(file_browser_ctx_t *ctx, const char
     }
 
     char new_path[FS_NAV_MAX_PATH];
-    int needed = snprintf(new_path, sizeof(new_path), "%s/%s", ctx->action_entry.directory, new_name);
+    int needed = snprintf(new_path, sizeof(new_path), "%s/%s", ctx->action_item.directory, new_name);
     if (needed < 0 || needed >= (int)sizeof(new_path)) {
         return ESP_ERR_INVALID_SIZE;
     }
