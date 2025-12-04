@@ -732,22 +732,15 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
     lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_changed, LV_EVENT_VALUE_CHANGED, ctx);
     lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_area_clicked, LV_EVENT_CLICKED, ctx);
     lv_obj_add_event_cb(ctx->text_area, text_viewer_on_text_scrolled, LV_EVENT_SCROLL, ctx);
-
-    lv_obj_t *slider_container = lv_obj_create(text_row);
-    lv_obj_remove_style_all(slider_container);
-    lv_obj_set_width(slider_container, 14);
-    lv_obj_set_height(slider_container, LV_PCT(100));
-    lv_obj_set_flex_flow(slider_container, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_all(slider_container, 0, 0);  
     
-    lv_obj_t *list_slider = lv_slider_create(slider_container);
+    lv_obj_t *list_slider = lv_slider_create(text_row);
     lv_slider_set_orientation(list_slider, LV_SLIDER_ORIENTATION_VERTICAL);
     lv_slider_set_range(list_slider, 100, 0); /* Min at top, max at bottom */
     lv_slider_set_value(list_slider, 0, LV_ANIM_OFF);
-    lv_obj_set_width(list_slider, LV_PCT(100));
-    lv_obj_set_height(list_slider, LV_PCT(100));
-    lv_obj_set_style_pad_top(list_slider, 15, 0);
-    lv_obj_set_style_pad_bottom(list_slider, 15, 0);
+    lv_obj_set_width(list_slider, 14);
+    lv_obj_set_height(list_slider, LV_PCT(85));
+    lv_obj_set_style_pad_top(list_slider, 0, 0);
+    lv_obj_set_style_pad_bottom(list_slider, 0, 0);
     lv_obj_set_style_pad_left(list_slider, 0, 0);
     lv_obj_set_style_pad_right(list_slider, 0, 0);
     lv_obj_set_style_bg_color(list_slider, lv_color_hex(0x1f2933), 0);
@@ -760,10 +753,9 @@ static void text_viewer_build_screen(text_viewer_ctx_t *ctx)
     lv_obj_set_style_bg_opa(list_slider, LV_OPA_COVER, LV_PART_KNOB);
     lv_obj_set_style_border_color(list_slider, lv_color_hex(0x3fbf7f), LV_PART_KNOB);
     lv_obj_set_style_border_width(list_slider, 1, LV_PART_KNOB);
-    lv_obj_set_style_radius(list_slider, 8, LV_PART_KNOB);
+    lv_obj_set_style_radius(list_slider, 6, LV_PART_KNOB);
     lv_obj_set_style_width(list_slider, 12, LV_PART_KNOB);
     lv_obj_set_style_height(list_slider, 12, LV_PART_KNOB);
-    lv_obj_clear_flag(list_slider, LV_OBJ_FLAG_SCROLL_CHAIN); /* Keep list from scrolling when dragging slider */
     
     ctx->keyboard = lv_keyboard_create(scr);
     lv_keyboard_set_textarea(ctx->keyboard, ctx->text_area);
