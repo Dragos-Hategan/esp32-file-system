@@ -30,7 +30,8 @@
 #define FILE_BROWSER_MAX_SORTABLE_ITEMS     100  // CAUTION! BIGGER NUMBER OR 0 MEANS MEMORY CRASHES
 #define FILE_BROWSER_LIST_WINDOW_SIZE       36   // CAUTION! BIGGER NUMBER MEANS MEMORY CRASHES
 #define FILE_BROWSER_LIST_WINDOW_STEP       18   // CAUTION! BIGGER NUMBER MEANS MEMORY CRASHES
-#define FILE_BROWSER_PATH_SCROLL_DELAY_MS   1500
+#define FILE_BROWSER_PATH_SCROLL_DELAY_MS   2000
+#define FILE_BROWSER_ENTRY_SCROLL_DELAY_MS  FILE_BROWSER_PATH_SCROLL_DELAY_MS
 
 #define FILE_BROWSER_WAIT_STACK_SIZE_B      (6 * 1024)
 #define FILE_BROWSER_WAIT_PRIO              (4)
@@ -95,6 +96,7 @@ typedef struct {
     lv_obj_t *rename_textarea;
     lv_obj_t *rename_keyboard;
     lv_timer_t *path_scroll_timer;
+    lv_timer_t *list_scroll_timer;
     file_browser_action_item_t action_item;
     file_browser_clipboard_t clipboard;
     char paste_conflict_path[FS_NAV_MAX_PATH];
@@ -238,6 +240,31 @@ static void file_browser_restart_path_scroll(file_browser_ctx_t *ctx);
  *              Its user_data must contain a valid file_browser_ctx_t*.
  */
 static void file_browser_path_scroll_timer_cb(lv_timer_t *timer);
+
+/**
+ * @brief Restart delayed scrolling for list item labels.
+ *
+ * Forces all visible item labels into clipped mode, then schedules a one-shot
+ * timer to re-enable circular scrolling after FILE_BROWSER_ENTRY_SCROLL_DELAY_MS.
+ *
+ * @param ctx Browser context containing the list widget.
+ */
+static void file_browser_restart_entry_scroll(file_browser_ctx_t *ctx);
+
+/**
+ * @brief Return the label child inside a list button, if any.
+ *
+ * @param btn List button object created via lv_list_add_btn.
+ * @return Pointer to the label child or NULL if not found.
+ */
+static lv_obj_t *file_browser_get_list_btn_label(lv_obj_t *btn);
+
+/**
+ * @brief Timer callback that enables scrolling for list item labels.
+ *
+ * @param timer LVGL timer (user_data = file_browser_ctx_t*).
+ */
+static void file_browser_entry_scroll_timer_cb(lv_timer_t *timer);
 
 /**
  * @brief Reset the virtual list window to the first page.
@@ -1731,8 +1758,79 @@ static void file_browser_update_sort_badges(file_browser_ctx_t *ctx)
     }
 }
 
+static lv_obj_t *file_browser_get_list_btn_label(lv_obj_t *btn)
+{
+    if (!btn) {
+        return NULL;
+    }
+
+    uint32_t child_cnt = lv_obj_get_child_count(btn);
+    for (uint32_t i = 0; i < child_cnt; ++i) {
+        lv_obj_t *child = lv_obj_get_child(btn, i);
+        if (child && lv_obj_check_type(child, &lv_label_class)) {
+            return child;
+        }
+    }
+
+    return NULL;
+}
+
+static void file_browser_entry_scroll_timer_cb(lv_timer_t *timer)
+{
+    file_browser_ctx_t *ctx = (file_browser_ctx_t *)lv_timer_get_user_data(timer);
+    if (ctx) {
+        ctx->list_scroll_timer = NULL;
+        if (ctx->list) {
+            uint32_t child_cnt = lv_obj_get_child_count(ctx->list);
+            for (uint32_t i = 0; i < child_cnt; ++i) {
+                lv_obj_t *label = file_browser_get_list_btn_label(lv_obj_get_child(ctx->list, i));
+                if (label) {
+                    lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+                }
+            }
+        }
+    }
+    lv_timer_del(timer);
+}
+
+static void file_browser_restart_entry_scroll(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->list) {
+        return;
+    }
+
+    if (ctx->list_scroll_timer) {
+        lv_timer_del(ctx->list_scroll_timer);
+        ctx->list_scroll_timer = NULL;
+    }
+
+    uint32_t child_cnt = lv_obj_get_child_count(ctx->list);
+    bool has_labels = false;
+    for (uint32_t i = 0; i < child_cnt; ++i) {
+        lv_obj_t *label = file_browser_get_list_btn_label(lv_obj_get_child(ctx->list, i));
+        if (label) {
+            lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+            has_labels = true;
+        }
+    }
+
+    if (!has_labels) {
+        return;
+    }
+
+    ctx->list_scroll_timer = lv_timer_create(file_browser_entry_scroll_timer_cb, FILE_BROWSER_ENTRY_SCROLL_DELAY_MS, ctx);
+    if (ctx->list_scroll_timer) {
+        lv_timer_set_repeat_count(ctx->list_scroll_timer, 1);
+    }
+}
+
 static void file_browser_populate_list(file_browser_ctx_t *ctx)
 {
+    if (ctx->list_scroll_timer) {
+        lv_timer_del(ctx->list_scroll_timer);
+        ctx->list_scroll_timer = NULL;
+    }
+
     lv_obj_clean(ctx->list);
 
     size_t count = 0;
@@ -1779,6 +1877,8 @@ static void file_browser_populate_list(file_browser_ctx_t *ctx)
         lv_obj_add_event_cb(btn, file_browser_on_item_click, LV_EVENT_CLICKED, ctx);
         lv_obj_add_event_cb(btn, file_browser_on_item_long_press, LV_EVENT_LONG_PRESSED, ctx);
     }
+
+    file_browser_restart_entry_scroll(ctx);
 }
 
 static bool file_browser_count_dir_items(file_browser_ctx_t *ctx, const fs_nav_item_t *item, size_t *out_count)

@@ -12,7 +12,7 @@
 #include "esp_log.h"
 #include "sd_card.h"
 
-#define TEXT_VIEWER_PATH_SCROLL_DELAY_MS 1500
+#define TEXT_VIEWER_PATH_SCROLL_DELAY_MS 2000
 
 /**
  * @brief Actions in the chunk-change prompt.
@@ -178,6 +178,7 @@ static void text_viewer_set_original(text_viewer_ctx_t *ctx, const char *text);
  * @param[out] step         Effective step size (chunks per step, >=1).
  */
 static void text_viewer_get_slider_params(text_viewer_ctx_t *ctx, size_t *window_size, size_t *step);
+
 /**
  * @brief Sync the chunk slider with the current window and file size.
  *
@@ -187,6 +188,7 @@ static void text_viewer_get_slider_params(text_viewer_ctx_t *ctx, size_t *window
  * @param[in,out] ctx Viewer context containing slider state.
  */
 static void text_viewer_update_slider(text_viewer_ctx_t *ctx);
+
 /**
  * @brief Handle slider press/drag/release to jump between chunk windows.
  *

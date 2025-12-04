@@ -33,7 +33,7 @@
 #define MY_CLASS (&lv_label_class)
 
 #define LV_LABEL_DEF_SCROLL_SPEED   lv_anim_speed_clamped(40, 1000, 10000)
-#define LV_LABEL_SCROLL_DELAY       1500
+#define LV_LABEL_SCROLL_DELAY       2000
 #define LV_LABEL_DOT_BEGIN_INV 0xFFFFFFFF
 #define LV_LABEL_HINT_HEIGHT_LIMIT 1024 /*Enable "hint" to buffer info about labels larger than this. (Speed up drawing)*/
 
