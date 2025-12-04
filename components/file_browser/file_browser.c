@@ -78,6 +78,7 @@ typedef struct {
     lv_obj_t *second_header;
     lv_obj_t *parent_btn;
     lv_obj_t *list;
+    lv_obj_t *list_slider;
     lv_obj_t *folder_dialog;
     lv_obj_t *folder_textarea;
     lv_obj_t *folder_keyboard;
@@ -108,6 +109,7 @@ typedef struct {
     bool list_at_bottom_edge;
     bool list_suppress_scroll;
     bool list_has_paged;
+    bool slider_suppress_change;
 } file_browser_ctx_t;
 
 static file_browser_ctx_t s_browser;
@@ -373,7 +375,10 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
  *
  * @param e LVGL event (LV_EVENT_SCROLL) with user data = @c file_browser_ctx_t*.
  */
- static void file_browser_on_list_scrolled(lv_event_t *e);
+static void file_browser_on_list_scrolled(lv_event_t *e);
+static void file_browser_on_slider_value_changed(lv_event_t *e);
+static void file_browser_update_slider(file_browser_ctx_t *ctx);
+static void file_browser_get_window_params(file_browser_ctx_t *ctx, size_t *window_size, size_t *step);
 
 /**
  * @brief Show an informational prompt for unsupported file formats.
@@ -1277,7 +1282,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_pad_bottom(list_slider, 0, 0);
     lv_obj_set_style_pad_left(list_slider, 0, 0);
     lv_obj_set_style_pad_right(list_slider, 0, 0);
-    lv_obj_set_style_translate_y(list_slider, 3, 0);
+    lv_obj_set_style_translate_y(list_slider, 1, 0);
     lv_obj_set_style_bg_color(list_slider, lv_color_hex(0x1f2933), 0);
     lv_obj_set_style_bg_opa(list_slider, LV_OPA_60, 0);
     lv_obj_set_style_radius(list_slider, 8, 0);
@@ -1291,6 +1296,9 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_radius(list_slider, 6, LV_PART_KNOB);
     lv_obj_set_style_width(list_slider, 12, LV_PART_KNOB);
     lv_obj_set_style_height(list_slider, 12, LV_PART_KNOB);
+    lv_obj_add_event_cb(list_slider, file_browser_on_slider_value_changed, LV_EVENT_VALUE_CHANGED, ctx);
+    lv_obj_clear_flag(list_slider, LV_OBJ_FLAG_SCROLL_CHAIN); /* Keep list from scrolling when dragging slider */
+    ctx->list_slider = list_slider;
 }
 
 static void file_browser_reset_window(file_browser_ctx_t *ctx)
@@ -1304,6 +1312,26 @@ static void file_browser_reset_window(file_browser_ctx_t *ctx)
     ctx->list_at_bottom_edge = false;
     ctx->list_suppress_scroll = false;
     ctx->list_has_paged = false;
+}
+
+static void file_browser_get_window_params(file_browser_ctx_t *ctx, size_t *window_size, size_t *step)
+{
+    if (!ctx || !window_size || !step) {
+        return;
+    }
+
+    size_t ws = ctx->list_window_size ? ctx->list_window_size : FILE_BROWSER_LIST_WINDOW_SIZE;
+    if (ws == 0) {
+        ws = 1;
+    }
+
+    size_t st = FILE_BROWSER_LIST_WINDOW_STEP ? FILE_BROWSER_LIST_WINDOW_STEP : (ws / 2);
+    if (st == 0) {
+        st = 1;
+    }
+
+    *window_size = ws;
+    *step = st;
 }
 
 static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top)
@@ -1328,6 +1356,7 @@ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_inde
     file_browser_populate_list(ctx);
     file_browser_hide_loading(ctx);
     lv_obj_update_layout(ctx->list);
+    file_browser_update_slider(ctx);
 
     if (ctx->list_has_paged) {
         /* Center only after the first paging has occurred. */
@@ -1335,6 +1364,40 @@ static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_inde
     }
 
     ctx->list_suppress_scroll = prev_suppress;
+}
+
+static void file_browser_update_slider(file_browser_ctx_t *ctx)
+{
+    if (!ctx || !ctx->list_slider) {
+        return;
+    }
+
+    size_t window_size = 1;
+    size_t step = 1;
+    file_browser_get_window_params(ctx, &window_size, &step);
+    size_t total = fs_nav_total_items(&ctx->nav);
+    size_t step_count = step ? ((total + step - 1) / step) : 1;
+    if (step_count == 0) {
+        step_count = 1;
+    }
+
+    int32_t max_val = (int32_t)(step_count - 1);
+    size_t current_step = step ? (ctx->list_window_start / step) : 0;
+    if (current_step > (size_t)max_val) {
+        current_step = (size_t)max_val;
+    }
+
+    bool prev_suppress = ctx->slider_suppress_change;
+    ctx->slider_suppress_change = true;
+    lv_slider_set_range(ctx->list_slider, max_val, 0); /* min at top, max at bottom */
+    lv_slider_set_value(ctx->list_slider, (int32_t)current_step, LV_ANIM_OFF);
+    ctx->slider_suppress_change = prev_suppress;
+
+    if (step_count <= 1) {
+        lv_obj_add_state(ctx->list_slider, LV_STATE_DISABLED);
+    } else {
+        lv_obj_remove_state(ctx->list_slider, LV_STATE_DISABLED);
+    }
 }
 
 static void file_browser_schedule_wait_for_reconnection(void)
@@ -2004,14 +2067,9 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
 
     size_t total = fs_nav_total_items(&ctx->nav);
 
-    size_t window_size = ctx->list_window_size ? ctx->list_window_size : FILE_BROWSER_LIST_WINDOW_SIZE;
-    if (window_size == 0) {
-        window_size = FILE_BROWSER_LIST_WINDOW_SIZE;
-    }
-    size_t step = FILE_BROWSER_LIST_WINDOW_STEP ? FILE_BROWSER_LIST_WINDOW_STEP : (window_size / 2);
-    if (step == 0) {
-        step = 1;
-    }
+    size_t window_size = 1;
+    size_t step = 1;
+    file_browser_get_window_params(ctx, &window_size, &step);
 
     if (at_bottom && !ctx->list_at_bottom_edge) {
         ctx->list_at_bottom_edge = true;
@@ -2043,6 +2101,33 @@ static void file_browser_on_list_scrolled(lv_event_t *e)
     } else if (!at_top) {
         ctx->list_at_top_edge = false;
     }
+}
+
+static void file_browser_on_slider_value_changed(lv_event_t *e)
+{
+    file_browser_ctx_t *ctx = lv_event_get_user_data(e);
+    if (!ctx || ctx->slider_suppress_change) {
+        return;
+    }
+
+    size_t window_size = 1;
+    size_t step = 1;
+    file_browser_get_window_params(ctx, &window_size, &step);
+    size_t total = fs_nav_total_items(&ctx->nav);
+    int32_t slider_val = lv_slider_get_value(lv_event_get_target(e));
+    if (slider_val < 0) {
+        slider_val = 0;
+    }
+
+    size_t window_index = (size_t)slider_val;
+    size_t max_start = (total > window_size) ? (total - window_size) : 0;
+    size_t new_start = window_index * step;
+    if (new_start > max_start) {
+        new_start = max_start;
+    }
+
+    ctx->list_has_paged = true;
+    file_browser_apply_window(ctx, new_start, SIZE_MAX, true, true);
 }
 
 static void file_browser_on_item_long_press(lv_event_t *e)
