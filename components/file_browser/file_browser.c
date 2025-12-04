@@ -1284,7 +1284,7 @@ static void file_browser_build_screen(file_browser_ctx_t *ctx)
     lv_obj_set_style_pad_bottom(list_slider, 0, 0);
     lv_obj_set_style_pad_left(list_slider, 0, 0);
     lv_obj_set_style_pad_right(list_slider, 0, 0);
-    lv_obj_set_style_translate_y(list_slider, 1, 0);
+    lv_obj_set_style_translate_y(list_slider, 3, 0);
     lv_obj_set_style_bg_color(list_slider, lv_color_hex(0x1f2933), 0);
     lv_obj_set_style_bg_opa(list_slider, LV_OPA_60, 0);
     lv_obj_set_style_radius(list_slider, 8, 0);
@@ -2169,6 +2169,17 @@ static void file_browser_on_slider_value_changed(lv_event_t *e)
         size_t target_step = ctx->slider_pending_step == SIZE_MAX ? clamped_step : ctx->slider_pending_step;
         if (target_step > max_step_index) {
             target_step = max_step_index;
+        }
+
+        /* If we returned to the current step, do nothing. */
+        size_t current_step = step ? (ctx->list_window_start / step) : 0;
+        if (ctx->list_window_start >= max_start) {
+            current_step = max_step_index;
+        }
+        if (target_step == current_step) {
+            ctx->slider_pending_step = SIZE_MAX;
+            ctx->slider_drag_active = false;
+            return;
         }
 
         size_t new_start = (target_step >= max_step_index) ? max_start : (target_step * step);
