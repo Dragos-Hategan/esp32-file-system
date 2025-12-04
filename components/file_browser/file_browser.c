@@ -247,7 +247,7 @@ static void file_browser_path_scroll_timer_cb(lv_timer_t *timer);
  static void file_browser_reset_window(file_browser_ctx_t *ctx);
 
 /**
- * @brief Rebuild the visible list window and reposition scroll.
+ * @brief Rebuild the visible list window and reposition scroll/anchor.
  *
  * @param[in,out] ctx Browser context.
  * @param start_index Global item index to start the window from.
@@ -256,6 +256,7 @@ static void file_browser_path_scroll_timer_cb(lv_timer_t *timer);
  * @param scroll_to_top Fallback scroll when no anchor: true = top, false = bottom.
  */
 static void file_browser_apply_window(file_browser_ctx_t *ctx, size_t start_index, size_t anchor_index, bool center_anchor, bool scroll_to_top);
+static void file_browser_set_reload_anchor_current(file_browser_ctx_t *ctx);
 
 /**
  * @brief Synchronize all UI elements with the current navigation state.
@@ -350,6 +351,8 @@ static void file_browser_update_parent_button(file_browser_ctx_t *ctx);
  * @brief Refresh the current directory view and redraw the list.
  *
  * Re-reads directory items via @c fs_nav_refresh and repopulates the LVGL list.
+ * If @c preserve_window_on_reload is true, keeps the current virtual window/anchor
+ * (clamped to the new totals); otherwise resets to the first window.
  *
  * @return
  * - ESP_OK on success
@@ -1355,6 +1358,18 @@ static void file_browser_reset_window(file_browser_ctx_t *ctx)
     ctx->reload_anchor_index = SIZE_MAX;
 }
 
+static void file_browser_set_reload_anchor_current(file_browser_ctx_t *ctx)
+{
+    if (!ctx || ctx->reload_anchor_index != SIZE_MAX) {
+        return;
+    }
+    size_t mid = ctx->list_window_start;
+    if (ctx->list_window_size > 0) {
+        mid += ctx->list_window_size / 2;
+    }
+    ctx->reload_anchor_index = mid;
+}
+
 static void file_browser_get_window_params(file_browser_ctx_t *ctx, size_t *window_size, size_t *step)
 {
     if (!ctx || !window_size || !step) {
@@ -1559,6 +1574,9 @@ static void file_browser_sync_view(file_browser_ctx_t *ctx)
     }
     bool preserve = ctx->preserve_window_on_reload;
     ctx->preserve_window_on_reload = false;
+    if (preserve && ctx->reload_anchor_index == SIZE_MAX) {
+        file_browser_set_reload_anchor_current(ctx);
+    }
     size_t anchor = ctx->reload_anchor_index;
     ctx->reload_anchor_index = SIZE_MAX;
     if (!preserve) {
@@ -1924,6 +1942,16 @@ static esp_err_t file_browser_reload(void)
             saved_start = 0;
         }
         ctx->list_window_start = saved_start;
+        if (ctx->reload_anchor_index == SIZE_MAX) {
+            size_t anchor = saved_start;
+            if (window_size > 1) {
+                anchor += window_size / 2;
+            }
+            if (total > 0 && anchor >= total) {
+                anchor = total - 1;
+            }
+            ctx->reload_anchor_index = anchor;
+        }
     } else {
         file_browser_reset_window(ctx);
     }
@@ -3307,6 +3335,8 @@ static void file_browser_on_paste_click(lv_event_t *e)
         return;
     }
 
+    ctx->preserve_window_on_reload = true;
+    file_browser_set_reload_anchor_current(ctx);
     err = file_browser_reload();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh after paste: %s", esp_err_to_name(err));
@@ -3385,6 +3415,8 @@ static void file_browser_on_paste_conflict(lv_event_t *e)
         return;
     }
 
+    ctx->preserve_window_on_reload = true;
+    file_browser_set_reload_anchor_current(ctx);
     err = file_browser_reload();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh after paste: %s", esp_err_to_name(err));
@@ -3476,6 +3508,8 @@ static void file_browser_on_copy_confirm(lv_event_t *e)
         return;
     }
 
+    ctx->preserve_window_on_reload = true;
+    file_browser_set_reload_anchor_current(ctx);
     err = file_browser_reload();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to refresh after paste: %s", esp_err_to_name(err));
@@ -3733,7 +3767,7 @@ static void file_browser_show_loading(file_browser_ctx_t *ctx)
     lv_obj_center(mbox);
 
     lv_obj_t *label = lv_label_create(mbox);
-    lv_label_set_text(label, "Loading...");
+    lv_label_set_text(label, "Loading");
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, LV_PCT(100));
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -3785,6 +3819,8 @@ static esp_err_t file_browser_delete_selected_item(file_browser_ctx_t *ctx)
     }
 
     file_browser_clear_action_state(ctx);
+    ctx->preserve_window_on_reload = true;
+    file_browser_set_reload_anchor_current(ctx);
     return file_browser_reload();
 }
 
