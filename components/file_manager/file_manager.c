@@ -1513,9 +1513,8 @@ static void file_manager_update_slider(file_manager_ctx_t *ctx)
         ctx->slider_pending_step = 0;
         ctx->slider_drag_active = false;
         lv_obj_add_state(ctx->list_slider, LV_STATE_DISABLED);
-        lv_obj_add_flag(ctx->list_slider, LV_OBJ_FLAG_HIDDEN);
         if (list_row) {
-            lv_obj_set_style_pad_right(list_row, 0, 0);
+            lv_obj_set_style_pad_right(list_row, FILE_BROWSER_SLIDER_GAP, 0);
         }
         return;
     }
@@ -1542,7 +1541,6 @@ static void file_manager_update_slider(file_manager_ctx_t *ctx)
     ctx->slider_pending_step = current_step;
 
     lv_obj_remove_state(ctx->list_slider, LV_STATE_DISABLED);
-    lv_obj_clear_flag(ctx->list_slider, LV_OBJ_FLAG_HIDDEN);
     if (list_row) {
         lv_obj_set_style_pad_right(list_row, FILE_BROWSER_SLIDER_GAP, 0);
     }

@@ -946,7 +946,6 @@ static void text_viewer_update_slider(text_viewer_ctx_t *ctx)
         ctx->slider_pending_step = 0;
         ctx->slider_drag_active = false;
         lv_obj_add_state(ctx->chunk_slider, LV_STATE_DISABLED);
-        lv_obj_add_flag(ctx->chunk_slider, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
@@ -970,7 +969,6 @@ static void text_viewer_update_slider(text_viewer_ctx_t *ctx)
     ctx->slider_suppress_change = prev;
     ctx->slider_pending_step = current_step;
     lv_obj_remove_state(ctx->chunk_slider, LV_STATE_DISABLED);
-    lv_obj_clear_flag(ctx->chunk_slider, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void text_viewer_on_slider_value_changed(lv_event_t *e)
