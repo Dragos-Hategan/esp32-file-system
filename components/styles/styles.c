@@ -1,5 +1,19 @@
 #include "styles.h"
 
+void styles_build_button(lv_obj_t *button)
+{
+    if (!button) {
+        return;
+    }
+    lv_obj_set_style_bg_color(button, UI_COLOR_ACCENT_BLUE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(button, UI_COLOR_BUTTON_BORDER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN);
+    lv_obj_set_style_text_color(button, UI_COLOR_TEXT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(button, UI_COLOR_TEXT, LV_PART_MAIN);
+}
+
 void styles_build_msgbox(lv_obj_t *mbox)
 {
     if (!mbox) {
